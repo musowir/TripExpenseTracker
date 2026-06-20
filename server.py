@@ -1,7 +1,7 @@
 import os
 import json
 import sqlite3
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, make_response
 
 app = Flask(__name__)
 
@@ -86,7 +86,13 @@ def serve_manifest():
 
 @app.route('/sw.js')
 def serve_sw():
-    return send_from_directory(BASE_DIR, 'sw.js', mimetype='application/javascript')
+    # Load the file safely using the absolute BASE_DIR path map
+    response = make_response(send_from_directory(BASE_DIR, 'sw.js'))
+    
+    # Enforce strict modern browser headers
+    response.headers['Content-Type'] = 'application/javascript'
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
 
 @app.route('/icon.png')
 def serve_icon():
