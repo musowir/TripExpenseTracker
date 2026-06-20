@@ -691,3 +691,12 @@ function escapeHtml(str) {
     if (str === null || str === undefined) return "";
     return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+
+// --- CRITICAL ATTACHMENT: ACTIVE BACKGROUND REGISTRATION LINKER FOR PWAs ---
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('ServiceWorker engine compiled successfully within path scope:', reg.scope))
+            .catch(err => console.error('ServiceWorker execution failed to align layout states:', err));
+    });
+}

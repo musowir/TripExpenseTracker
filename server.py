@@ -78,6 +78,20 @@ def serve_index():
 def serve_assets(path):
     return send_from_directory(os.path.join(BASE_DIR, 'assets'), path)
 
+# --- NEW PWA HOOK ROUTES FOR NATIVE ANDROID SYSTEM INTERACTION ---
+
+@app.route('/manifest.json')
+def serve_manifest():
+    return send_from_directory(BASE_DIR, 'manifest.json', mimetype='application/json')
+
+@app.route('/sw.js')
+def serve_sw():
+    return send_from_directory(BASE_DIR, 'sw.js', mimetype='application/javascript')
+
+@app.route('/icon.png')
+def serve_icon():
+    return send_from_directory(BASE_DIR, 'icon.png', mimetype='image/png')
+
 # --- WORKSPACE REGISTRY ROUTERS ---
 
 @app.route('/api/trips', methods=['GET'])
