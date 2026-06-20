@@ -1,0 +1,221 @@
+:root {
+    --bg-deep: #090d16;
+    --bg-card: #131926;
+    --text-pure: #f8fafc;
+    --text-dim: #64748b;
+    --accent-glow: #38bdf8;
+    --border-line: #1e293b;
+    --danger-muted: #f87171;
+    --success-glow: #34d399;
+    --nav-bottom-h: 68px;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: var(--bg-deep);
+    color: var(--text-pure);
+    margin: 0;
+    padding: 0;
+    padding-bottom: calc(var(--nav-bottom-h) + 20px);
+    -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
+}
+
+.container { max-width: 480px; margin: 0 auto; padding: 16px; }
+
+header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-line);
+}
+
+header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+
+.sync-status-pill {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--bg-deep);
+    border: 1px solid var(--border-line);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-dim);
+}
+.sync-status-pill .indicator-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }
+.sync-status-pill.synced { color: var(--success-glow); border-color: rgba(52, 211, 153, 0.2); }
+.sync-status-pill.synced .indicator-dot { background: var(--success-glow); }
+.sync-status-pill.error { color: var(--danger-muted); border-color: rgba(248, 113, 113, 0.2); }
+.sync-status-pill.error .indicator-dot { background: var(--danger-muted); }
+
+.view-panel { display: none; }
+.view-panel.active { display: block !important; }
+
+.card { background: var(--bg-card); border: 1px solid var(--border-line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+
+.total-display-card {
+    background: radial-gradient(circle at top left, #0f1e36, var(--bg-card) 75%);
+    border: 1px solid rgba(56, 189, 248, 0.15);
+    text-align: center;
+    padding: 24px 16px;
+}
+
+.total-display-card label { color: var(--accent-glow); font-weight: 600; font-size: 10px; letter-spacing: 0.06em; }
+.total-value { font-size: 34px; font-weight: 700; color: var(--text-pure); margin-top: 4px; letter-spacing: -0.01em; }
+
+.form-group { margin-bottom: 14px; }
+label { display: block; font-weight: 500; margin-bottom: 6px; font-size: 11px; color: var(--text-dim); letter-spacing: 0.02em; }
+
+input, select {
+    width: 100%; padding: 11px 12px; border: 1px solid var(--border-line); border-radius: 8px;
+    box-sizing: border-box; font-size: 14px; background-color: var(--bg-deep); color: var(--text-pure);
+}
+input:focus, select:focus { outline: none; border-color: var(--accent-glow); }
+
+button.btn-primary {
+    width: 100%; padding: 12px; background-color: var(--text-pure); color: var(--bg-deep);
+    border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px;
+}
+
+.section-lbl {
+    font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 20px 0 10px 0; border-top: 1px solid var(--border-line); padding-top: 16px;
+}
+.section-lbl:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+
+.util-btn {
+    text-align: left; background: transparent; border: 1px solid var(--border-line); color: var(--text-pure);
+    padding: 14px; font-size: 13px; border-radius: 8px; font-weight: 500; margin-bottom: 10px;
+    width: 100%; cursor: pointer; box-sizing: border-box; display: flex; align-items: center; gap: 12px;
+}
+.util-btn:active { background: var(--bg-deep); }
+.btn-danger { color: var(--danger-muted); border-color: rgba(248, 113, 113, 0.2); }
+
+/* Icons Layout Mechanics Engine - Simple Consistent Wireframes */
+.ui-icon { display: inline-block; position: relative; width: 16px; height: 16px; border: 2px solid currentColor; box-sizing: border-box; flex-shrink: 0; vertical-align: middle; }
+
+.icon-log { border-radius: 50%; }
+.icon-log::after { content:''; position:absolute; top:4px; left:4px; width:4px; height:4px; background:currentColor; border-radius:50%; }
+
+.icon-history { border-radius: 2px; }
+.icon-history::before { content:''; position:absolute; top:3px; left:3px; width:6px; height:2px; background:currentColor; }
+.icon-history::after { content:''; position:absolute; top:7px; left:3px; width:4px; height:2px; background:currentColor; }
+
+.icon-analytics { border: none; display: flex; align-items: flex-end; gap: 2px; }
+.icon-analytics span { display:block; width:3px; background:currentColor; border-radius:1px; }
+.icon-analytics span:nth-child(1){ height:5px; }
+.icon-analytics span:nth-child(2){ height:11px; }
+.icon-analytics span:nth-child(3){ height:8px; }
+
+.icon-setup { border-radius: 2px; }
+.icon-setup::after { content: ''; position: absolute; top: 2px; left: 2px; right: 2px; bottom: 2px; border: 1px solid currentColor; }
+
+/* Refactored Utility & Secondary Icons to match the geometric rhythm */
+.icon-export { border-radius: 2px; }
+.icon-export::before { content:''; position:absolute; top:2px; left:3px; width:4px; height:4px; border-right:2px solid currentColor; border-top:2px solid currentColor; transform: rotate(45deg); }
+.icon-export::after { content:''; position:absolute; top:4px; left:5px; width:2px; height:6px; background:currentColor; }
+
+.icon-pdf { border-radius: 2px; }
+.icon-pdf::before { content:''; position:absolute; top:3px; left:3px; right:3px; height:2px; background:currentColor; }
+.icon-pdf::after { content:''; position:absolute; top:7px; left:3px; right:5px; height:2px; background:currentColor; }
+
+.icon-trash { border-radius: 2px; }
+.icon-trash::before { content:''; position:absolute; top:2px; left:2px; right:2px; height:1px; background:currentColor; }
+.icon-trash::after { content:''; position:absolute; top:5px; left:4px; right:4px; bottom:2px; border:1px solid currentColor; border-top:none; }
+
+.icon-person { border-radius: 50%; }
+.icon-person::before { content:''; position:absolute; top:2px; left:4px; width:4px; height:4px; background:currentColor; border-radius:50%; }
+.icon-person::after { content:''; position:absolute; top:8px; left:2px; right:2px; bottom:1px; border:1px solid currentColor; border-bottom:none; border-radius:3px 3px 0 0; }
+
+.icon-arrow-right { border: none; }
+.icon-arrow-right::before { content:''; position:absolute; top:4px; left:7px; width:4px; height:4px; border-right:2px solid currentColor; border-top:2px solid currentColor; transform: rotate(45deg); }
+.icon-arrow-right::after { content:''; position:absolute; top:6px; left:2px; width:7px; height:2px; background:currentColor; }
+
+.log-item { padding: 12px 0; border-bottom: 1px solid var(--border-line); display: flex; justify-content: space-between; align-items: center; }
+.log-item:last-child { border-bottom: none; }
+.log-meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+.tag-pill { background: #1e293b; color: #cbd5e1; padding: 1px 5px; border-radius: 4px; font-size: 10px; }
+
+.bottom-nav {
+    position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-bottom-h);
+    background: var(--bg-card); border-top: 1px solid var(--border-line);
+    display: flex; justify-content: space-around; align-items: center; z-index: 1000;
+}
+
+.nav-item {
+    background: none; border: none; color: var(--text-dim); font-size: 11px; font-weight: 500;
+    display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: pointer; width: 25%; padding: 10px 0;
+}
+.nav-item.active { color: var(--accent-glow); }
+
+.chart-row { margin-bottom: 18px; }
+.chart-labels { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }
+.chart-bar-bg { background: var(--bg-deep); height: 5px; border-radius: 2px; overflow: hidden; margin-bottom: 6px; }
+.chart-bar-fill { background: var(--accent-glow); height: 100%; width: 0%; transition: width 0.3s ease; }
+
+.sub-metrics-list { padding-left: 12px; border-left: 1px dashed var(--border-line); margin-top: 4px; }
+.sub-metric-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); padding: 2px 0; }
+
+/* PDF Compile Layer Targets */
+.print-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid #111827;
+    padding-bottom: 8px;
+    margin-bottom: 20px;
+}
+.print-title { font-size: 20px; font-weight: 700; color: #111827; margin: 0; }
+.print-date { font-size: 11px; color: #4b5563; }
+.print-summary-box {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.print-summary-val { font-size: 20px; font-weight: 700; color: #111827; }
+.print-section-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 20px 0 8px 0;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 4px;
+    color: #1f2937;
+}
+.print-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+.print-table th { text-align: left; padding: 8px; font-weight: 600; border-bottom: 1px solid #111827; font-size: 11px; text-transform: uppercase; color: #374151; }
+.print-table td { padding: 8px; border-bottom: 1px solid #e5e7eb; color: #111827; }
+.print-amount { font-weight: 600; text-align: right; }
+.print-chart-row { padding: 6px 0; border-bottom: 1px dashed #e5e7eb; font-size: 12px; }
+.print-sub-row { display: flex; justify-content: space-between; font-size: 11px; color: #4b5563; padding-left: 14px; margin-top: 2px; }
+
+/* Fixed Target Container Layout Engine for html2pdf Elements Placement */
+#printReportContainer {
+    display: none;
+    background: #ffffff !important;
+    color: #111827 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box;
+    width: 190mm; /* Coordinates cleanly inside standard page canvas boundaries */
+    position: relative;
+    top: 0;
+    left: 0;
+}
+#printReportContainer * {
+    color: #111827 !important;
+}
+#printReportContainer > *:first-child {
+    margin-top: 0 !important;
+    padding-top: 4px !important;
+}
