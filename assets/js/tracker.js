@@ -107,7 +107,15 @@ function validDesc(v)   { const s = String(v ?? "").trim(); return s.length > 0 
 window.addEventListener("DOMContentLoaded", async () => {
     initAppEngine();
     setDefaultDateTime();
-    try { await pullTripsList(true); } catch (e) { console.error("Init error:", e); }
+    try {
+        await pullTripsList(true);
+    } catch (e) {
+        console.error("Init error:", e);
+        showToast("Failed to load — check server is running.", "error");
+    } finally {
+        const loader = document.getElementById("loader");
+        if (loader) loader.style.display = "none";
+    }
 });
 
 function setDefaultDateTime() {
@@ -119,21 +127,23 @@ function setDefaultDateTime() {
 
 // ── Data pull ─────────────────────────────────────────────────────────────
 async function pullDatabaseState() {
-    const data = await apiFetch(`/api/data?trip_id=${currentTripId}`);
-    if (!data) {
-        const loader = document.getElementById("loader");
-        if (loader) loader.textContent = "Error: DB connection failed.";
-        return;
-    }
-    globalCachedData = data;
-    currentCurrency  = data.currency || "INR";
-    currentBudget    = data.budget   || null;
     const loader = document.getElementById("loader");
-    if (loader) loader.style.display = "none";
-    await pullPeopleList();
-    renderUI();
-    renderBudgetBar();
-    renderDailyAnalytics();
+    try {
+        const data = await apiFetch(`/api/data?trip_id=${currentTripId}`);
+        if (!data) {
+            if (loader) { loader.textContent = "DB connection failed — is the server running?"; loader.style.display = "block"; }
+            return;
+        }
+        globalCachedData = data;
+        currentCurrency  = data.currency || "INR";
+        currentBudget    = data.budget   || null;
+        await pullPeopleList();
+        renderUI();
+        renderBudgetBar();
+        renderDailyAnalytics();
+    } finally {
+        if (loader) loader.style.display = "none";
+    }
 }
 
 async function pullTripsList(shouldLoad = false) {
@@ -142,6 +152,12 @@ async function pullTripsList(shouldLoad = false) {
     globalTripsList = Array.isArray(data) ? data : [];
     if (globalTripsList.length > 0 && !globalTripsList.some(t => t.id === currentTripId)) {
         _saveTripId(globalTripsList[0].id);
+    }
+    if (globalTripsList.length === 0) {
+        renderTripSelectors();
+        renderTripDashboard();
+        showToast("No trips found. Create one in Setup.", "warn");
+        return;
     }
     renderTripSelectors();
     renderTripDashboard();
@@ -895,150 +911,33 @@ function initAppEngine() {
 
     // ── PDF ────────────────────────────────────────────────────────────────
     document.getElementById("pdfBtn")?.addEventListener("click", () => {
-        try {
-            const now = new Date();
-            const sel = document.getElementById("globalTripSelector");
-            const tripName = sel?.options[sel.selectedIndex]?.text || "Trip";
-            const currency = globalCachedData?.currency || "₹";
-            
-            if (!globalCachedData?.expenses || globalCachedData.expenses.length === 0) {
-                showToast("No expenses to export. Add some expenses first.", "error");
-                return;
-            }
-            
-            const expenses = globalCachedData.expenses;
-            let grandTotal = 0, personTotals = {}, categoryTotals = {};
-            
-            // Proper calculation based on split_with and main_cat/sub_cat
-            expenses.forEach(exp => {
-                const amt = parseFloat(exp.amount) || 0;
-                grandTotal += amt;
-                
-                // Category: main_cat > sub_cat
-                const catKey = `${exp.main_cat} > ${exp.sub_cat}`;
-                categoryTotals[catKey] = (categoryTotals[catKey] || 0) + amt;
-                
-                // Person: divide amount among split_with people
-                const splits = exp.split_with || [];
-                if (splits.length > 0) {
-                    const share = amt / splits.length;
-                    splits.forEach(person => {
-                        personTotals[person] = (personTotals[person] || 0) + share;
-                    });
-                }
-            });
-            
-            const fmt = (n) => currency + parseFloat(n).toFixed(2);
-            
-            let htmlContent = `
-                <html>
-                <head>
-                    <style>
-                        body { font-family: Arial, sans-serif; color: #111827; padding: 20px; line-height: 1.6; }
-                        h1 { font-size: 24px; margin-bottom: 5px; }
-                        .date { font-size: 11px; color: #6b7280; margin-bottom: 20px; }
-                        .section { margin-bottom: 35px; }
-                        .section-title { font-size: 14px; font-weight: bold; text-transform: uppercase; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 15px; letter-spacing: 0.5px; }
-                        .total-box { font-size: 18px; color: #3b82f6; font-weight: bold; margin: 15px 0; }
-                        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-                        th { background: #f3f4f6; padding: 10px; text-align: left; border-bottom: 2px solid #111827; font-weight: bold; }
-                        td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
-                        .amount { text-align: right; font-weight: 600; }
-                        .total-row { background: #f9fafb; font-weight: bold; border-top: 2px solid #111827; }
-                    </style>
-                </head>
-                <body>
-                    <h1>${tripName} - Trip Summary</h1>
-                    <p class="date">Generated: ${now.toLocaleDateString()} ${now.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
-                    
-                    <div class="section">
-                        <div class="section-title">Total Spend</div>
-                        <div class="total-box">${fmt(grandTotal)}</div>
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">Spend Per Person</div>
-                        <table>
-                            <thead><tr><th>Person</th><th class="amount">Amount</th></tr></thead>
-                            <tbody>
-                                ${Object.entries(personTotals)
-                                    .sort((a, b) => b[1] - a[1])
-                                    .map(([name, total]) => `<tr><td>${name}</td><td class="amount">${fmt(total)}</td></tr>`)
-                                    .join("")}
-                                <tr class="total-row"><td>TOTAL</td><td class="amount">${fmt(grandTotal)}</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">Category Wise Spend</div>
-                        <table>
-                            <thead><tr><th>Category</th><th class="amount">Amount</th><th class="amount">%</th></tr></thead>
-                            <tbody>
-                                ${Object.entries(categoryTotals)
-                                    .sort((a, b) => b[1] - a[1])
-                                    .map(([cat, total]) => `<tr><td>${cat}</td><td class="amount">${fmt(total)}</td><td class="amount">${((total/grandTotal)*100).toFixed(1)}%</td></tr>`)
-                                    .join("")}
-                                <tr class="total-row"><td>TOTAL</td><td class="amount">${fmt(grandTotal)}</td><td class="amount">100%</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">Expense Details</div>
-                        <table>
-                            <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid By</th><th>Split</th><th class="amount">Amount</th></tr></thead>
-                            <tbody>
-                                ${expenses.map(exp => {
-                                    const date = new Date(exp.timestamp).toLocaleDateString();
-                                    const cat = `${exp.main_cat} > ${exp.sub_cat}`;
-                                    const split = (exp.split_with || []).join(", ") || "-";
-                                    return `<tr><td>${date}</td><td>${exp.description}</td><td>${cat}</td><td>${exp.paid_by}</td><td>${split}</td><td class="amount">${fmt(exp.amount)}</td></tr>`;
-                                }).join("")}
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                </body>
-                </html>
-            `;
-            
-            const element = document.createElement("div");
-            element.innerHTML = htmlContent;
-            const filename = `${tripName.replace(/\s+/g,"_")}_${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}-${String(now.getMinutes()).padStart(2,"0")}-${String(now.getSeconds()).padStart(2,"0")}.pdf`;
-            
-            html2pdf()
-                .set({ margin: 10, filename: filename, image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 2, useCORS: true, logging: false }, jsPDF: { unit: "mm", format: "a4", orientation: "portrait" } })
-                .from(element)
-                .save()
-                .then(() => {
-                    showToast("PDF exported successfully!", "success");
-                    console.log("PDF saved as:", filename);
-                })
-                .catch((err) => {
-                    console.error("PDF export error:", err);
-                    showToast("PDF export failed.", "error");
-                });
-                
-        } catch (err) {
-            console.error("PDF generation error:", err);
-            showToast("Error generating PDF.", "error");
+        if (!globalCachedData?.expenses?.length) {
+            showToast("No expenses to export. Add some expenses first.", "error");
+            return;
         }
+
+        const now      = new Date();
+        const sel      = document.getElementById("globalTripSelector");
+        const tripName = sel?.options[sel.selectedIndex]?.text || "Trip";
+        const dateStr  = `${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+
+        // Stamp title and date into the already-populated print container
+        const titleEl = document.getElementById("printReportTitle");
+        const dateEl  = document.getElementById("printGenerationDate");
+        if (titleEl) titleEl.textContent = `${tripName} — Trip Summary`;
+        if (dateEl)  dateEl.textContent  = `Generated: ${dateStr}`;
+
+        // Temporarily set document.title so browser uses it as the PDF filename
+        const prevTitle  = document.title;
+        const dateSuffix = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+        document.title   = `${tripName}_${dateSuffix}`;
+        window.print();
+        document.title   = prevTitle;
     });
 
-    document.getElementById("exportBtn")?.addEventListener("click", exportDataSnapshot);
-    document.getElementById("clearAllBtn")?.addEventListener("click", clearAllDatabaseLogs);
-
-    // Pre-fill edit trip settings when settings panel opens
-    document.querySelector('[data-target="view-settings"]')?.addEventListener("click", () => {
-        const trip = globalTripsList.find(t => t.id === currentTripId);
-        if (!trip) return;
-        const nameEl = document.getElementById("editTripName");
-        const curEl  = document.getElementById("editTripCurrency");
-        const budEl  = document.getElementById("editTripBudget");
-        if (nameEl) nameEl.value = trip.name;
-        if (curEl)  curEl.value  = trip.currency || "INR";
-        if (budEl)  budEl.value  = trip.budget || "";
+    // ── Export JSON ────────────────────────────────────────────────────────
+    document.getElementById("exportBtn")?.addEventListener("click", () => {
+        exportDataSnapshot();
     });
 }
 
@@ -1093,36 +992,30 @@ function exportDataSnapshot() {
     const tripName = sel?.options[sel.selectedIndex]?.text || "trip";
     const trip     = globalTripsList.find(t => t.id === currentTripId) || {};
 
-    // Canonical export envelope — everything needed for a future import
     const payload = {
-        // ── Schema version: bump when the shape changes ──────────────────
         _export_version: 1,
         _exported_at: new Date().toISOString(),
 
-        // ── Trip metadata ────────────────────────────────────────────────
         trip: {
-            id:         currentTripId,
-            name:       trip.name        || tripName,
-            currency:   trip.currency    || globalCachedData.currency || "INR",
-            budget:     trip.budget      ?? globalCachedData.budget ?? null,
-            created_at: trip.created_at  || null,
+            id:          currentTripId,
+            name:        trip.name        || tripName,
+            currency:    trip.currency    || globalCachedData.currency || "INR",
+            budget:      trip.budget      ?? globalCachedData.budget ?? null,
+            created_at:  trip.created_at  || null,
             total_spend: trip.total_spend ?? null,
         },
 
-        // ── Members (active + inactive for historical integrity) ─────────
         people: globalPeopleList.map(p => ({
             id:        p.id,
             name:      p.name,
             is_active: p.is_active ?? 1,
         })),
 
-        // ── Categories with their sub-categories ────────────────────────
         categories: (globalCachedData.categories || []).map(c => ({
             mainCat: c.mainCat,
             subs:    c.subs || [],
         })),
 
-        // ── Every expense with full split detail ─────────────────────────
         expenses: (globalCachedData.expenses || []).map(e => ({
             id:          e.id,
             description: e.description,
@@ -1135,8 +1028,8 @@ function exportDataSnapshot() {
         })),
     };
 
-    const date = new Date();
-    const ds   = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+    const now  = new Date();
+    const ds   = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
     const filename = `${tripName.replace(/\s+/g,"_")}_${ds}.json`;
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });

@@ -340,10 +340,15 @@ button.btn-primary:active {
 
 /* ── LOADER ────────────────────────────────────────────────────────────── */
 #loader {
-    text-align: center;
-    padding-top: 50px;
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-deep);
     color: var(--text-dim);
     font-size: 14px;
+    z-index: 9999;
 }
 
 /* ── TRIP SELECTOR ─────────────────────────────────────────────────────── */
@@ -689,54 +694,78 @@ button.btn-primary:active {
 }
 
 
-.print-title { font-size: 24px; font-weight: 700; color: #111827; margin: 0; }
-.print-date { font-size: 11px; color: #6b7280; }
-.print-summary-box {
-    background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-    border: 2px solid #d1d5db;
-    border-radius: 8px;
-    padding: 16px 20px;
-    margin-bottom: 28px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.print-summary-val { font-size: 22px; font-weight: 700; color: #111827; }
-.print-section-title {
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin: 24px 0 12px 0;
-    border-bottom: 2px solid #e5e7eb;
-    padding-bottom: 8px;
-    color: #1f2937;
-}
-.print-table { width: 100%; border-collapse: collapse; margin-bottom: 28px; }
-.print-table th { text-align: left; padding: 10px; font-weight: 700; border-bottom: 2px solid #111827; font-size: 11px; text-transform: uppercase; color: #374151; }
-.print-table td { padding: 10px; border-bottom: 1px solid #e5e7eb; color: #111827; font-size: 12px; }
-.print-amount { font-weight: 600; text-align: right; }
-.print-chart-row { padding: 10px 0; border-bottom: 1px dashed #e5e7eb; font-size: 12px; }
-.print-sub-row { display: flex; justify-content: space-between; font-size: 11px; color: #4b5563; padding-left: 16px; margin-top: 4px; }
+/* ── PRINT CONTAINER — hidden on screen, shown only at print time ───────── */
+#printReportContainer { display: none; }
 
-#printReportContainer {
-    display: none;
-    background: #ffffff !important;
-    color: #111827 !important;
-    padding: 20px !important;
-    margin: 0 !important;
-    box-sizing: border-box;
-    width: 190mm;
-    position: relative;
-    top: 0;
-    left: 0;
-    visibility: hidden;
-}
-#printReportContainer * {
-    color: #111827 !important;
-}
-#printReportContainer > *:first-child {
-    margin-top: 0 !important;
+/* Screen-only styles for print element classes (inert on screen) */
+.print-title       { font-size: 22px; font-weight: 700; color: #111827; margin: 0 0 4px; }
+.print-date        { font-size: 11px; color: #6b7280; margin-bottom: 20px; }
+.print-summary-box { background: #eff6ff; border: 1.5px solid #bfdbfe; border-left: 4px solid #2563eb;
+                     border-radius: 8px; padding: 14px 20px; margin-bottom: 24px;
+                     display: flex; justify-content: space-between; align-items: center; }
+.print-summary-val { font-size: 24px; font-weight: 700; color: #1e3a5f; }
+.print-section-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em;
+                       margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #1e3a5f; color: #1e3a5f; }
+.print-table       { width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 11px; }
+.print-table th    { text-align: left; padding: 9px 10px; font-size: 9px; font-weight: 600;
+                     text-transform: uppercase; letter-spacing: .06em; color: #ffffff; background: #1e3a5f; border: none; }
+.print-table td    { padding: 9px 10px; border-bottom: 1px solid #e2e8f0; color: #1e293b; vertical-align: top; line-height: 1.4; }
+.print-table td small { display: block; font-size: 10px; color: #64748b; margin-top: 2px; }
+.print-table tbody tr:nth-child(even) { background: #f8fafc; }
+.print-amount      { font-weight: 600; text-align: right; }
+.print-chart-row   { padding: 10px 12px; margin-bottom: 6px; background: #f8fafc;
+                     border-radius: 6px; border-left: 3px solid #2563eb; font-size: 12px; }
+.print-chart-row > div { display: flex; justify-content: space-between; align-items: baseline; }
+.print-sub-row     { display: flex; justify-content: space-between; font-size: 10px; color: #475569;
+                     padding: 4px 0 0 10px; margin-top: 4px; border-top: 1px dashed #e2e8f0; }
+.print-header      { background: #1e3a5f; margin: -20px -20px 24px; padding: 24px 24px 20px; }
+.print-header .print-title { color: #ffffff; }
+.print-header .print-date  { color: #93c5fd; }
+
+/* ── @media print — reveal report, hide app UI ──────────────────────────── */
+@media print {
+    body > *:not(#printReportContainer) { display: none !important; }
+    
+    /* Explicitly hide navigation and other UI elements */
+    header { display: none !important; }
+    nav { display: none !important; }
+    .bottom-nav { display: none !important; }
+    .custom-modal-overlay { display: none !important; }
+    .edit-modal-overlay { display: none !important; }
+
+    #printReportContainer {
+        display: block !important;
+        background: #ffffff;
+        color: #1e293b;
+        padding: 20px;
+        margin: 0;
+        width: 100%;
+        box-sizing: border-box;
+        font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    /* Force background colours through — required for header band and zebra rows */
+    #printReportContainer * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .print-header {
+        background: #1e3a5f !important;
+        margin: -20px -20px 24px !important;
+        padding: 24px 24px 20px !important;
+    }
+    .print-header .print-title { color: #ffffff !important; }
+    .print-header .print-date  { color: #93c5fd !important; }
+    .print-summary-box         { background: #eff6ff !important; border-left: 4px solid #2563eb !important; }
+    .print-table th            { background: #1e3a5f !important; color: #ffffff !important; }
+    .print-table tbody tr:nth-child(even) { background: #f8fafc !important; }
+    .print-chart-row           { background: #f8fafc !important; border-left: 3px solid #2563eb !important; }
+
+    .print-table tr  { page-break-inside: avoid; }
+    .print-chart-row { page-break-inside: avoid; }
+
+    @page { margin: 10mm 12mm; }
 }
 
 /* --- CUSTOM OVERLAY COMPONENTS (Fixes 1000477209.jpg & 1000477210.jpg) --- */
