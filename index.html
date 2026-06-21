@@ -4,75 +4,42 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Expense Tracker</title>
-    
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#131926">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="apple-touch-icon" href="/icon.png">
-
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <link rel="stylesheet" href="assets/css/style.css">
-    <style>
-        .trip-selector-container { flex-grow: 1; margin: 0 16px; max-width: 180px; }
-        .trip-nav-select { padding: 6px 10px; font-size: 13px; font-weight: 600; background-color: var(--bg-deep); color: var(--accent-glow); border-color: var(--border-line); }
-        .list-management-box { border: 1px solid var(--border-line); border-radius:8px; background:var(--bg-deep); max-height:160px; overflow-y:auto; margin-bottom:14px; }
-        .list-item-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid var(--border-line); }
-        .list-item-row:last-child { border-bottom: none; }
-        
-        .checkbox-split-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-            gap: 8px;
-            padding: 10px;
-            background: var(--bg-deep);
-            border: 1px solid var(--border-line);
-            border-radius: 8px;
-            margin-top: 4px;
-        }
-        .checkbox-pill-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            color: var(--text-pure);
-            cursor: pointer;
-        }
-        .checkbox-pill-item input { cursor: pointer; width: 15px; height: 15px; }
-
-        /* Style adjustments for per-person metrics */
-        .person-spend-badge-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 4px;
-            margin-top: 6px;
-            padding-top: 6px;
-            border-top: 1px dashed var(--border-line);
-        }
-        .person-spend-badge {
-            font-size: 11px;
-            padding: 2px 6px;
-            background: rgba(255,255,255,0.04);
-            border: 1px solid var(--border-line);
-            border-radius: 4px;
-            color: var(--text-dim);
-        }
-        
-        /* New style for the summary totals */
-        .summary-total-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid var(--border-line);
-            font-size: 13px;
-        }
-        .summary-total-row:last-child {
-            border-bottom: none;
-        }
-    </style>
 </head>
 <body>
+    <div id="loader">Initializing workspace…</div>
+
+    <!-- Hidden print container (printReportContainer itself is display:none via CSS until export) -->
+    <div id="printReportContainer">
+        <div class="print-header">
+            <div class="print-title" id="printReportTitle">Trip Summary</div>
+            <div class="print-date" id="printGenerationDate">Generated: —</div>
+        </div>
+        <div class="print-summary-box">
+            <span style="font-weight:600;font-size:11px;text-transform:uppercase;color:#374151">Total Spend</span>
+            <span class="print-summary-val" id="printGrandTotal">0.00</span>
+        </div>
+        <div class="print-section-title">Spend Per Person</div>
+        <div id="printPersonTotalsSummary"></div>
+        <div class="print-section-title">Category Metrics</div>
+        <div id="printAnalyticsSummary"></div>
+        <div class="print-section-title">Expense Log</div>
+        <table class="print-table">
+            <thead><tr>
+                <th style="width:20%">Date & Time</th>
+                <th style="width:35%">Description & Payer</th>
+                <th style="width:25%">Split</th>
+                <th style="width:20%;text-align:right">Amount</th>
+            </tr></thead>
+            <tbody id="printTableLogBody"></tbody>
+        </table>
+    </div>
 
     <header>
         <h1>Log</h1>
@@ -80,176 +47,324 @@
             <select id="globalTripSelector" class="trip-nav-select"></select>
         </div>
         <div class="sync-status-pill" id="syncBadge">
-            <span class="indicator-dot"></span><span id="syncStatusText">SQLite Live</span>
+            <span class="indicator-dot"></span><span id="syncStatusText">Connecting…</span>
         </div>
     </header>
 
-    <div style="display: none;">
-        <div id="printReportContainer">
-            <div class="print-header">
-                <div class="print-title" id="printReportTitle">Trip Summary Statement</div>
-                <div class="print-date" id="printGenerationDate">Generated: --/--/----</div>
-            </div>
-            <div class="print-summary-box">
-                <span style="font-weight:600; font-size:11px; text-transform:uppercase; color:#374151;">Total Aggregated Spend</span>
-                <span class="print-summary-val" id="printGrandTotal">₹0.00</span>
-            </div>
-            <div class="print-section-title">Category Metrics</div>
-            <div id="printAnalyticsSummary"></div>
-            <div class="print-section-title">Itemized History Log</div>
-            <table class="print-table">
-                <thead>
-                    <tr>
-                        <th style="width: 20%">Date & Time</th>
-                        <th style="width: 35%">Description & Payer</th>
-                        <th style="width: 25%">Splits Allocation</th>
-                        <th style="width: 20%; text-align: right;">Total Amount</th>
-                    </tr>
-                </thead>
-                <tbody id="printTableLogBody"></tbody>
-            </table>
-        </div>
-    </div>
-
     <div class="container">
+
+        <!-- ── LOG ─────────────────────────────────────────────────────── -->
         <div class="view-panel active" id="view-home">
+            <!-- Budget bar -->
+            <div class="card" id="budgetCard" style="display:none">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                    <h3 style="margin:0;font-size:13px;font-weight:600">Trip Budget</h3>
+                    <span id="budgetPct" style="font-size:12px;color:var(--accent-glow);font-weight:600">0%</span>
+                </div>
+                <div class="budget-bar-bg"><div class="budget-bar-fill" id="budgetBarFill" style="width:0%"></div></div>
+                <div class="budget-meta">
+                    <span>Spent: <b id="budgetSpent">0</b></span>
+                    <span>Budget: <b id="budgetTotal">0</b></span>
+                    <span>Left: <b id="budgetRemain">0</b></span>
+                </div>
+                <div class="budget-alert" id="budgetAlert"></div>
+            </div>
+
+            <!-- Total + balance -->
             <div class="card total-display-card">
                 <label id="totalSpendLabel">TOTAL TRIP SPEND</label>
                 <div class="total-value" id="totalSpend">₹0.00</div>
             </div>
-
             <div class="card" id="groupBreakdownCard">
-                <h3 style="margin-top:0; font-size:14px; font-weight:600; margin-bottom:4px;">Group Balance Matrix</h3>
-                <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 12px;">Calculates asymmetric weighted network splits.</div>
-                <div id="groupDebtsList" style="font-size: 13px; display: flex; flex-direction: column; gap: 6px;"></div>
+                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:4px">Group Balance</h3>
+                <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Who owes whom after settlement optimisation.</div>
+                <div id="groupDebtsList" style="font-size:13px;display:flex;flex-direction:column;gap:6px"></div>
             </div>
 
+            <!-- Expense form -->
             <div class="card">
-                <h3 style="margin-top:0; font-size:14px; font-weight:600; margin-bottom:14px;">Log Group Expense</h3>
+                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:14px">Log Expense</h3>
                 <form id="expenseForm">
+                    <div class="form-group"><label>Date & Time</label><input type="datetime-local" id="expDateTime" required></div>
+                    <div class="form-group"><label>Who Paid?</label><select id="expPaidBy" required></select></div>
                     <div class="form-group">
-                        <label>Date & Time</label>
-                        <input type="datetime-local" id="expDateTime" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Who Paid?</label>
-                        <select id="expPaidBy" required></select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Split Between (Who Benefits?)</label>
+                        <label>Split Between</label>
                         <div id="splitConsumersContainer" class="checkbox-split-grid"></div>
                     </div>
-
-                    <div class="form-group">
-                        <label>Description</label>
-                        <input type="text" id="expDesc" placeholder="Item details..." required>
-                    </div>
-                    <div class="form-group">
-                        <label>Amount (₹)</label>
-                        <input type="number" id="expAmount" placeholder="0.00" step="0.01" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Category</label>
-                        <select id="expCategory" required></select>
-                    </div>
-                    <div class="form-group">
-                        <label>Sub-Category</label>
-                        <select id="expSubCategory" required></select>
-                    </div>
+                    <div class="form-group"><label>Description</label><input type="text" id="expDesc" placeholder="What was this for?" required maxlength="255"></div>
+                    <div class="form-group"><label>Amount</label><input type="number" id="expAmount" placeholder="0.00" step="0.01" min="0.01" required></div>
+                    <div class="form-group"><label>Category</label><select id="expCategory" required></select></div>
+                    <div class="form-group"><label>Sub-Category</label><select id="expSubCategory" required></select></div>
                     <button type="submit" class="btn-primary">Add Entry</button>
                 </form>
             </div>
         </div>
 
+        <!-- ── TRIP DASHBOARD ───────────────────────────────────────────── -->
+        <div class="view-panel" id="view-dashboard">
+            <div class="card">
+                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:12px">All Trips</h3>
+                <div id="tripDashboardGrid" class="trip-dash-grid"></div>
+            </div>
+        </div>
+
+        <!-- ── HISTORY ──────────────────────────────────────────────────── -->
         <div class="view-panel" id="view-history">
             <div class="card">
-                <h3 style="margin-top:0; font-size:14px; font-weight:600; margin-bottom:12px;">Transaction Logs</h3>
+                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:12px">Transaction Logs</h3>
                 <div id="historyList"></div>
             </div>
         </div>
 
+        <!-- ── ANALYTICS ────────────────────────────────────────────────── -->
         <div class="view-panel" id="view-analytics">
+            <!-- Daily analytics -->
+            <div class="card" id="dailyAnalyticsCard" style="display:none">
+                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:4px">Daily Spend</h3>
+                <div style="display:flex;gap:12px;margin-bottom:12px">
+                    <div style="flex:1;background:var(--bg-deep);border-radius:8px;padding:10px;text-align:center">
+                        <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">AVG / DAY</div>
+                        <div id="dailyAvg" style="font-size:15px;font-weight:700;color:var(--accent-glow)">—</div>
+                    </div>
+                    <div style="flex:1;background:var(--bg-deep);border-radius:8px;padding:10px;text-align:center">
+                        <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">HIGHEST DAY</div>
+                        <div id="dailyHighDay" style="font-size:11px;font-weight:600;color:var(--text-pure)">—</div>
+                        <div id="dailyHighAmt" style="font-size:13px;font-weight:700;color:var(--danger-muted)">—</div>
+                    </div>
+                </div>
+                <div id="dailyAnalyticsList"></div>
+            </div>
+            <!-- Category analytics -->
             <div class="card">
-                <h3 style="margin-top:0; font-size:14px; font-weight:600; margin-bottom:14px;">Category Metrics</h3>
+                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:14px">Category Breakdown</h3>
                 <div id="analyticsList"></div>
             </div>
-            
-            <div class="card" id="personTotalsSummaryCard" style="margin-top: 16px;">
-                <h3 style="margin-top:0; font-size:14px; font-weight:600; margin-bottom:4px;">Total Spend Summary per Person</h3>
-                <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 12px;">Aggregated consumption footprint across all entries.</div>
-                <div id="personTotalsSummaryList" style="display: flex; flex-direction: column; gap: 4px;"></div>
+            <!-- Per-person totals -->
+            <div class="card" id="personTotalsSummaryCard" style="margin-top:16px;display:none">
+                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:4px">Spend Per Person</h3>
+                <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Total consumption share across all entries.</div>
+                <div id="personTotalsSummaryList" style="display:flex;flex-direction:column;gap:4px"></div>
             </div>
         </div>
 
+        <!-- ── SETTINGS ─────────────────────────────────────────────────── -->
         <div class="view-panel" id="view-settings">
-            <div class="card">
-                <h3 style="margin-top:0; font-size:14px; font-weight:600; margin-bottom:14px;">Manage Structure</h3>
-                
-                <div class="section-lbl">Trip Workspaces</div>
-                <label>Create New Trip Instance</label>
-                <div style="display:flex; gap:8px; margin-bottom:10px;">
-                    <input type="text" id="newTripInput" placeholder="e.g., Delhi 2026">
-                    <button id="addTripBtn" style="width:auto; padding:0 14px;" class="btn-primary">Create</button>
-                </div>
-                <label>Existing Workspace Directories</label>
-                <div id="settingsTripManagementList" class="list-management-box"></div>
+            <p class="settings-intro">Tap a section to expand it.</p>
 
-                <div class="section-lbl">Trip Members Directory</div>
-                <label>Add Person to Current Trip</label>
-                <div style="display:flex; gap:8px; margin-bottom:10px;">
-                    <input type="text" id="newPersonInput" placeholder="e.g., Sarah">
-                    <button id="addPersonBtn" style="width:auto; padding:0 14px;" class="btn-primary">Add</button>
-                </div>
-                <label>Current Trip Roster Configuration</label>
-                <div id="settingsPeopleManagementList" class="list-management-box"></div>
-
-                <div class="section-lbl">Categories Configuration</div>
-                <label>Add Main Category</label>
-                <div style="display:flex; gap:8px; margin-bottom:14px;">
-                    <input type="text" id="newMainInput" placeholder="e.g., Events">
-                    <button id="addMainBtn" style="width:auto; padding:0 14px;" class="btn-primary">Add</button>
-                </div>
-
-                <label>Add Sub-Category</label>
-                <select id="targetMainSelect" style="margin-bottom:10px;"></select>
-                <div style="display:flex; gap:8px;">
-                    <input type="text" id="newSubInput" placeholder="e.g., Tickets">
-                    <button id="addSubBtn" style="width:auto; padding:0 14px;" class="btn-primary">Add</button>
-                </div>
-
-                <div class="section-lbl">Data Snapshot Backup</div>
-                <button class="util-btn" id="exportBtn">
-                    <span class="ui-icon icon-export"></span> Export Backup Snapshot (.json)
+            <!-- Trip settings -->
+            <div class="card accordion-card open" data-accordion>
+                <button type="button" class="accordion-head">
+                    <span class="accordion-head-text">
+                        <span class="ui-icon icon-setup"></span>
+                        <span><span class="accordion-title">This Trip</span><span class="accordion-sub">Name, currency, budget</span></span>
+                    </span>
+                    <span class="accordion-chevron">⌄</span>
                 </button>
-                
-                <div class="section-lbl">Reports</div>
-                <button class="util-btn" id="pdfBtn">
-                    <span class="ui-icon icon-pdf"></span> Save Current Trip as PDF
-                </button>
+                <div class="accordion-body">
+                    <div class="form-group"><label>Trip Name</label><input type="text" id="editTripName" placeholder="Trip name" maxlength="80"></div>
+                    <div class="currency-row">
+                        <div class="form-group" style="flex:1;margin-bottom:0">
+                            <label>Currency</label>
+                            <select id="editTripCurrency">
+                                <option value="INR">INR ₹</option><option value="USD">USD $</option>
+                                <option value="EUR">EUR €</option><option value="AED">AED د.إ</option>
+                                <option value="GBP">GBP £</option><option value="SGD">SGD S$</option>
+                                <option value="AUD">AUD A$</option><option value="JPY">JPY ¥</option>
+                                <option value="CAD">CAD C$</option><option value="THB">THB ฿</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:1;margin-bottom:0">
+                            <label>Budget (optional)</label>
+                            <input type="number" id="editTripBudget" placeholder="e.g. 50000" step="0.01" min="0">
+                        </div>
+                    </div>
+                    <button id="saveTripSettingsBtn" class="btn-primary">Save Trip Settings</button>
+                </div>
+            </div>
 
-                <div class="section-lbl">Maintenance</div>
-                <button class="util-btn btn-danger" id="clearAllBtn">
-                    <span class="ui-icon icon-trash"></span> Wipe Current Trip Logs
+            <!-- All trips -->
+            <div class="card accordion-card" data-accordion>
+                <button type="button" class="accordion-head">
+                    <span class="accordion-head-text">
+                        <span class="ui-icon icon-analytics"><span></span><span></span><span></span></span>
+                        <span><span class="accordion-title">Your Trips</span><span class="accordion-sub">Switch, create, or delete a trip</span></span>
+                    </span>
+                    <span class="accordion-chevron">⌄</span>
                 </button>
+                <div class="accordion-body">
+                    <div class="section-lbl" style="margin-top:0">Existing trips</div>
+                    <div id="settingsTripManagementList" class="list-management-box"></div>
+
+                    <div class="section-lbl">Start a new trip</div>
+                    <div class="form-group"><label>Trip Name</label><input type="text" id="newTripInput" placeholder="e.g., Goa 2026" maxlength="80"></div>
+                    <div class="currency-row">
+                        <div class="form-group" style="flex:1;margin-bottom:0">
+                            <label>Currency</label>
+                            <select id="newTripCurrency">
+                                <option value="INR">INR ₹</option><option value="USD">USD $</option>
+                                <option value="EUR">EUR €</option><option value="AED">AED د.إ</option>
+                                <option value="GBP">GBP £</option><option value="SGD">SGD S$</option>
+                                <option value="AUD">AUD A$</option><option value="JPY">JPY ¥</option>
+                                <option value="CAD">CAD C$</option><option value="THB">THB ฿</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:1;margin-bottom:0">
+                            <label>Budget (optional)</label>
+                            <input type="number" id="newTripBudget" placeholder="e.g. 50000" step="0.01" min="0">
+                        </div>
+                    </div>
+                    <button id="addTripBtn" class="btn-primary">Create Trip</button>
+                </div>
+            </div>
+
+            <!-- Members -->
+            <div class="card accordion-card" data-accordion>
+                <button type="button" class="accordion-head">
+                    <span class="accordion-head-text">
+                        <span class="ui-icon icon-person"></span>
+                        <span><span class="accordion-title">Trip Members</span><span class="accordion-sub">Who's splitting expenses</span></span>
+                    </span>
+                    <span class="accordion-chevron">⌄</span>
+                </button>
+                <div class="accordion-body">
+                    <label>Add Person</label>
+                    <div style="display:flex;gap:8px;margin-bottom:10px">
+                        <input type="text" id="newPersonInput" placeholder="e.g., Sarah" maxlength="80">
+                        <button id="addPersonBtn" style="width:auto;padding:0 14px" class="btn-primary">Add</button>
+                    </div>
+                    <div id="settingsPeopleManagementList" class="list-management-box"></div>
+                    <p class="hint-text">Someone with expense history can't be removed — that protects everyone's balance. They'll show as "Has expenses" instead.</p>
+                </div>
+            </div>
+
+            <!-- Categories -->
+            <div class="card accordion-card" data-accordion>
+                <button type="button" class="accordion-head">
+                    <span class="accordion-head-text">
+                        <span class="ui-icon icon-history"></span>
+                        <span><span class="accordion-title">Categories</span><span class="accordion-sub">Organize what you spend on</span></span>
+                    </span>
+                    <span class="accordion-chevron">⌄</span>
+                </button>
+                <div class="accordion-body">
+                    <div class="section-lbl" style="margin-top:0">Add a category</div>
+                    <label>New Main Category</label>
+                    <div style="display:flex;gap:8px;margin-bottom:14px">
+                        <input type="text" id="newMainInput" placeholder="e.g., Events" maxlength="80">
+                        <button id="addMainBtn" style="width:auto;padding:0 14px" class="btn-primary">Add</button>
+                    </div>
+                    <label>New Sub-Category</label>
+                    <select id="targetMainSelect" style="margin-bottom:8px"></select>
+                    <div style="display:flex;gap:8px;margin-bottom:4px">
+                        <input type="text" id="newSubInput" placeholder="e.g., Tickets" maxlength="80">
+                        <button id="addSubBtn" style="width:auto;padding:0 14px" class="btn-primary">Add</button>
+                    </div>
+
+                    <div class="section-lbl">Remove a category</div>
+                    <label>Main Category</label>
+                    <div style="display:flex;gap:8px;margin-bottom:10px">
+                        <select id="deleteMainSelect" style="flex:1"></select>
+                        <button id="deleteMainCatBtn" style="width:auto;padding:0 12px;background:var(--danger-muted);border-color:var(--danger-muted)" class="btn-primary">Delete</button>
+                    </div>
+                    <label>Sub-Category (under selected main)</label>
+                    <div style="display:flex;gap:8px;margin-bottom:4px">
+                        <select id="deleteSubSelect" style="flex:1"><option value="">— select —</option></select>
+                        <button id="deleteSubCatBtn" style="width:auto;padding:0 12px;background:var(--danger-muted);border-color:var(--danger-muted)" class="btn-primary">Delete</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Export / PDF -->
+            <div class="card accordion-card" data-accordion>
+                <button type="button" class="accordion-head">
+                    <span class="accordion-head-text">
+                        <span class="ui-icon icon-export"></span>
+                        <span><span class="accordion-title">Reports</span><span class="accordion-sub">Export or download a summary</span></span>
+                    </span>
+                    <span class="accordion-chevron">⌄</span>
+                </button>
+                <div class="accordion-body">
+                    <button class="util-btn" id="exportBtn"><span class="ui-icon icon-export"></span> Export JSON Snapshot</button>
+                    <button class="util-btn" id="pdfBtn" style="margin-bottom:0"><span class="ui-icon icon-pdf"></span> Save as PDF Report</button>
+                </div>
+            </div>
+
+            <!-- Danger zone -->
+            <div class="card accordion-card danger-zone" data-accordion>
+                <button type="button" class="accordion-head">
+                    <span class="accordion-head-text">
+                        <span class="ui-icon icon-trash" style="color:var(--danger-muted)"></span>
+                        <span><span class="accordion-title" style="color:var(--danger-muted)">Danger Zone</span><span class="accordion-sub">Permanent, can't be undone</span></span>
+                    </span>
+                    <span class="accordion-chevron">⌄</span>
+                </button>
+                <div class="accordion-body">
+                    <button class="util-btn btn-danger" id="clearAllBtn" style="margin-bottom:0"><span class="ui-icon icon-trash"></span> Wipe Current Trip Logs</button>
+                </div>
             </div>
         </div>
     </div>
 
+    <!-- Bottom nav -->
     <nav class="bottom-nav">
-        <button class="nav-item active" data-target="view-home">
-            <span class="ui-icon icon-log"></span><span>Log</span>
-        </button>
-        <button class="nav-item" data-target="view-history">
-            <span class="ui-icon icon-history"></span><span>History</span>
-        </button>
-        <button class="nav-item" data-target="view-analytics">
-            <span class="ui-icon icon-analytics"><span></span><span></span><span></span></span><span>Analysis</span>
-        </button>
-        <button class="nav-item" data-target="view-settings">
-            <span class="ui-icon icon-setup"></span><span>Setup</span>
-        </button>
+        <button class="nav-item active" data-target="view-home"><span class="ui-icon icon-log"></span><span>Log</span></button>
+        <button class="nav-item" data-target="view-dashboard"><span class="ui-icon icon-analytics"><span></span><span></span><span></span></span><span>Trips</span></button>
+        <button class="nav-item" data-target="view-history"><span class="ui-icon icon-history"></span><span>History</span></button>
+        <button class="nav-item" data-target="view-analytics"><span class="ui-icon icon-analytics"><span></span><span></span><span></span></span><span>Analytics</span></button>
+        <button class="nav-item" data-target="view-settings"><span class="ui-icon icon-setup"></span><span>Setup</span></button>
     </nav>
+
+    <!-- Confirm modal -->
+    <div class="custom-modal-overlay" id="customModal">
+        <div class="custom-modal-card">
+            <h4 id="customModalTitle">Confirm</h4>
+            <p id="customModalMessage">Are you sure?</p>
+            <div class="custom-modal-actions">
+                <button class="modal-btn modal-btn-cancel" id="customModalCancelBtn">Cancel</button>
+                <button class="modal-btn modal-btn-confirm" id="customModalConfirmBtn">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom select drawer -->
+    <div class="custom-modal-overlay" id="customSelectModal">
+        <div class="custom-drawer-card">
+            <div class="drawer-header">
+                <span id="customSelectTitle">Select</span>
+                <span class="drawer-close" id="customSelectClose">&times;</span>
+            </div>
+            <div class="drawer-options-list" id="customSelectOptionsContainer"></div>
+        </div>
+    </div>
+
+    <!-- Edit expense modal -->
+    <div class="edit-modal-overlay" id="editExpenseModal">
+        <div class="edit-modal-card">
+            <div class="edit-modal-header">
+                <h4 style="margin:0;font-size:15px;font-weight:700">Edit Expense</h4>
+                <span id="cancelEditExpBtn" style="font-size:22px;cursor:pointer;color:var(--text-dim);line-height:1">&times;</span>
+            </div>
+            <form id="editExpenseForm" style="display:flex;flex-direction:column;flex:1;min-height:0">
+                <input type="hidden" id="editExpId">
+                <div class="edit-modal-scroll-body">
+                    <div class="form-group"><label>Description</label><input type="text" id="editExpDesc" maxlength="255" required></div>
+                    <div class="form-group"><label>Amount</label><input type="number" id="editExpAmount" step="0.01" min="0.01" required></div>
+                    <div class="form-group"><label>Date & Time</label><input type="datetime-local" id="editExpDateTime" required></div>
+                    <div class="form-group"><label>Paid By</label><select id="editExpPaidBy" required></select></div>
+                    <div class="form-group"><label>Category</label><select id="editExpCat" required></select></div>
+                    <div class="form-group"><label>Sub-Category</label><select id="editExpSubCat" required></select></div>
+                    <div class="form-group">
+                        <label>Split Between</label>
+                        <div id="editSplitGrid" class="checkbox-split-grid"></div>
+                    </div>
+                </div>
+                <div class="edit-modal-actions">
+                    <button type="button" id="cancelEditExpBtn2" class="util-btn">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <script src="assets/js/tracker.js"></script>
 </body>
