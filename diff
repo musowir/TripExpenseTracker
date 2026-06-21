@@ -1,0 +1,93 @@
+diff --git a/assets/js/tracker.js b/assets/js/tracker.js
+index 809635a..dfbc02e 100644
+--- a/assets/js/tracker.js
++++ b/assets/js/tracker.js
+@@ -203,6 +203,7 @@ function renderUI() {
+ 
+     renderTripSelectors();
+     renderLogsAndAnalytics();
++    renderTripDashboard();
+     setupCustomDropdownInterceptors();
+ }
+ 
+@@ -743,13 +744,31 @@ function initAppEngine() {
+             const h = document.querySelector("header h1");
+             if (h) h.textContent = labels[tid] || "";
+             if (tid === "view-dashboard") renderTripDashboard();
++            
++            // Pre-fill "This Trip" form when settings tab is opened
++            if (tid === "view-settings") {
++                const trip = globalTripsList.find(t => t.id === currentTripId);
++                if (trip) {
++                    const nameEl = document.getElementById("editTripName");
++                    const curEl  = document.getElementById("editTripCurrency");
++                    const budEl  = document.getElementById("editTripBudget");
++                    if (nameEl) nameEl.value = trip.name || "";
++                    if (curEl)  curEl.value  = trip.currency || "INR";
++                    if (budEl)  budEl.value  = trip.budget || "";
++                }
++            }
+         });
+     });
+ 
+     // Trip selector
+     document.getElementById("globalTripSelector")?.addEventListener("change", function () {
+         _saveTripId(this.value);
+-        pullDatabaseState();
++        pullDatabaseState().then(() => {
++            // Re-render dashboard if it's currently active
++            if (document.getElementById("view-dashboard")?.classList.contains("active")) {
++                renderTripDashboard();
++            }
++        });
+     });
+ 
+     // Category sub-dropdown chain
+@@ -831,7 +850,7 @@ function initAppEngine() {
+             document.getElementById("expDesc").value   = "";
+             document.getElementById("expAmount").value = "";
+             setDefaultDateTime();
+-            await pullDatabaseState();
++            await pullTripsList(true);
+             showToast("Expense logged.", "success");
+         }
+     });
+@@ -858,7 +877,7 @@ function initAppEngine() {
+         });
+         if (data) {
+             document.getElementById("editExpenseModal")?.classList.remove("active");
+-            await pullDatabaseState();
++            await pullTripsList(true);
+             showToast("Expense updated.", "success");
+         }
+     });
+@@ -977,14 +996,14 @@ async function deleteExpenseEntry(id) {
+     const ok = await showCustomConfirm("Delete Expense", "Remove this expense entry?");
+     if (!ok) return;
+     const data = await apiFetch("/api/expense/delete", { id });
+-    if (data) { await pullDatabaseState(); showToast("Entry deleted.", "success"); }
++    if (data) { await pullTripsList(true); showToast("Entry deleted.", "success"); }
+ }
+ 
+ async function clearAllDatabaseLogs() {
+     const ok = await showCustomConfirm("Wipe Logs", "Delete ALL expense logs for this trip?");
+     if (!ok) return;
+     const data = await apiFetch("/api/clear", { trip_id: currentTripId });
+-    if (data) { await pullDatabaseState(); showToast("Logs wiped.", "success"); }
++    if (data) { await pullTripsList(true); showToast("Logs wiped.", "success"); }
+ }
+ 
+ function exportDataSnapshot() {
+diff --git a/manifest.json b/manifest.json
+index b2707f8..5c505d9 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -1,6 +1,6 @@
+ {
+-  "name": "Expense Tracker Matrix",
+-  "short_name": "TripSpend",
++  "name": "Trip Settle",
++  "short_name": "Settle",
+   "start_url": "/",
+   "display": "standalone",
+   "background_color": "#090d16",

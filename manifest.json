@@ -1,6 +1,6 @@
 {
-  "name": "Expense Tracker Matrix",
-  "short_name": "TripSpend",
+  "name": "Trip Settle",
+  "short_name": "Settle",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#090d16",
