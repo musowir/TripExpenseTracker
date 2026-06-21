@@ -1,702 +1,1231 @@
-let globalCachedData = { expenses: [], categories: [] };
-let globalTripsList = [];
-let globalPeopleList = [];
-let currentTripId = parseInt(localStorage.getItem('activeTripId')) || 1;
+"use strict";
+
+// ── Constants & state ─────────────────────────────────────────────────────
+const LS_TRIP_KEY    = "exptracker_activeTripId_v1";
+const MAX_NAME       = 80;
+const MAX_DESC       = 255;
+const MAX_AMOUNT     = 10_000_000;
+const RESERVED       = "me";
+
+const CURRENCY_SYMBOLS = {
+    INR:"₹", USD:"$", EUR:"€", AED:"د.إ", GBP:"£",
+    SGD:"S$", AUD:"A$", JPY:"¥", CAD:"C$", THB:"฿"
+};
+
+let globalCachedData  = { expenses: [], categories: [], currency: "INR", budget: null };
+let globalTripsList   = [];
+let globalPeopleList  = [];
+let currentTripId     = _safeLoadTripId();
+let currentCurrency   = "INR";
+let currentBudget     = null;
+
+function _safeLoadTripId() {
+    const n = parseInt(localStorage.getItem(LS_TRIP_KEY), 10);
+    return (Number.isFinite(n) && n > 0) ? n : 1;
+}
+function _saveTripId(id) {
+    const n = parseInt(id, 10);
+    if (Number.isFinite(n) && n > 0) { currentTripId = n; localStorage.setItem(LS_TRIP_KEY, String(n)); }
+}
+
+// ── Currency helper ───────────────────────────────────────────────────────
+function fmt(amount) {
+    const sym = CURRENCY_SYMBOLS[currentCurrency] || currentCurrency + " ";
+    return `${sym}${parseFloat(amount || 0).toFixed(2)}`;
+}
+
+// ── Toast + sync badge ────────────────────────────────────────────────────
+let _toastTimer   = null;
+let _badgeRestore = null;
+
+function showToast(msg, type = "info") {
+    let t = document.getElementById("_appToast");
+    if (!t) {
+        t = document.createElement("div");
+        t.id = "_appToast";
+        t.style.cssText = "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:8px;font-size:13px;font-weight:500;z-index:9999;max-width:320px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.45);transition:opacity .3s;pointer-events:none";
+        document.body.appendChild(t);
+    }
+    const palettes = { info:["#1e293b","#f1f5f9"], error:["#7f1d1d","#fca5a5"], success:["#064e3b","#6ee7b7"], warn:["#78350f","#fde68a"] };
+    const [bg, fg] = palettes[type] || palettes.info;
+    t.style.cssText += `;background:${bg};color:${fg}`;
+    t.textContent = msg;
+    t.style.opacity = "1";
+
+    // Temporarily mirror in the sync badge
+    const badge = document.getElementById("syncBadge");
+    const text  = document.getElementById("syncStatusText");
+    if (badge && text) {
+        const prevClass = badge.className;
+        const prevText  = text.textContent;
+        badge.className = "sync-status-pill " + (type === "error" ? "error" : type === "success" ? "synced" : "syncing");
+        text.textContent = msg.length > 22 ? msg.slice(0, 22) + "…" : msg;
+        clearTimeout(_badgeRestore);
+        _badgeRestore = setTimeout(() => {
+            badge.className = prevClass;
+            text.textContent = prevText;
+        }, 3500);
+    }
+
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { t.style.opacity = "0"; }, 3500);
+}
+
+function updateSyncBadge(status, message) {
+    const badge = document.getElementById("syncBadge");
+    const text  = document.getElementById("syncStatusText");
+    if (!badge || !text) return;
+    badge.className  = "sync-status-pill " + status;
+    text.textContent = message;
+}
+
+// ── Central API fetch ─────────────────────────────────────────────────────
+async function apiFetch(url, payload = null) {
+    try {
+        const opts = payload
+            ? { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) }
+            : { method:"GET" };
+        const res  = await fetch(url, opts);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data?.error || `Server error (${res.status})`, "error"); return null; }
+        updateSyncBadge("synced", "SQLite Connected");
+        return data;
+    } catch {
+        updateSyncBadge("error", "DB Offline");
+        showToast("Network error — check server.", "error");
+        return null;
+    }
+}
+
+// ── Validation ────────────────────────────────────────────────────────────
+const _SAFE = /^[\w\s\-'\.,&\(\)/]{1,80}$/;
+function validName(v)   { return !!(v && typeof v === "string" && _SAFE.test(v.trim())); }
+function validAmount(v) { const n = parseFloat(v); return Number.isFinite(n) && n > 0 && n <= MAX_AMOUNT; }
+function validDesc(v)   { const s = String(v ?? "").trim(); return s.length > 0 && s.length <= MAX_DESC; }
+
+// ── Init ──────────────────────────────────────────────────────────────────
+window.addEventListener("DOMContentLoaded", async () => {
+    initAppEngine();
+    setDefaultDateTime();
+    try { await pullTripsList(true); } catch (e) { console.error("Init error:", e); }
+});
 
 function setDefaultDateTime() {
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    document.getElementById('expDateTime').value = now.toISOString().slice(0, 16);
+    const el = document.getElementById("expDateTime");
+    if (el) el.value = now.toISOString().slice(0, 16);
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-    initAppEngine();
-    setDefaultDateTime();
-    pullTripsList(true);
-});
-
-function initAppEngine() {
-    document.querySelectorAll('.nav-item').forEach(btn => {
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-            document.querySelectorAll('.view-panel').forEach(p => p.classList.remove('active'));
-            this.classList.add('active');
-            const targetId = this.getAttribute('data-target');
-            if(document.getElementById(targetId)) document.getElementById(targetId).classList.add('active');
-            
-            const headerTitle = document.querySelector('header h1');
-            if(headerTitle) {
-                if(targetId === 'view-home') headerTitle.textContent = "Log";
-                if(targetId === 'view-history') headerTitle.textContent = "Logs";
-                if(targetId === 'view-analytics') headerTitle.textContent = "Metrics";
-                if(targetId === 'view-settings') headerTitle.textContent = "Setup";
-            }
-        });
-    });
-
-    document.getElementById('globalTripSelector').addEventListener('change', function() {
-        currentTripId = parseInt(this.value);
-        localStorage.setItem('activeTripId', currentTripId);
-        pullDatabaseState();
-    });
-
-    document.getElementById('expCategory').addEventListener('change', function() {
-        populateSubDropdown(this.value);
-    });
-
-    document.getElementById('addTripBtn').addEventListener('click', async () => {
-        const input = document.getElementById('newTripInput');
-        const name = input.value.trim();
-        if(!name) return;
-        
-        try {
-            const response = await fetch('/api/trips/add', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name })
-            });
-            const resData = await response.json();
-            if(response.ok) {
-                input.value = '';
-                currentTripId = resData.id;
-                localStorage.setItem('activeTripId', currentTripId);
-                await pullTripsList(true);
-            } else { alert(resData.error || "Failed to create trip."); }
-        } catch { alert("Network error saving trip."); }
-    });
-
-    document.getElementById('addPersonBtn').addEventListener('click', async () => {
-        const input = document.getElementById('newPersonInput');
-        const name = input.value.trim();
-        if(!name) return;
-        if(name.toLowerCase() === 'me') {
-            alert("'me' is protected and always initialized by default.");
-            return;
-        }
-
-        try {
-            const response = await fetch('/api/people/add', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ trip_id: currentTripId, name })
-            });
-            if(response.ok) {
-                input.value = '';
-                await pullPeopleList();
-            } else {
-                const resData = await response.json();
-                alert(resData.error || "Failed to append roster name.");
-            }
-        } catch { alert("Network infrastructure connection error."); }
-    });
-
-    document.getElementById('pdfBtn').addEventListener('click', () => {
-        const now = new Date();
-        const activeTripName = document.getElementById('globalTripSelector').options[document.getElementById('globalTripSelector').selectedIndex]?.text || 'Trip';
-        
-        document.getElementById('printReportTitle').textContent = `${activeTripName} - Split Balance Report`;
-        document.getElementById('printGenerationDate').textContent = `Generated: ${now.toLocaleDateString()} ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
-        
-        const targetElement = document.getElementById('printReportContainer');
-        targetElement.style.display = 'block';
-
-        const configOptions = {
-            margin:       10,
-            image:        { type: 'jpeg', quality: 0.98 },
-            html2canvas:  { 
-                scale: 2, 
-                useCORS: true, 
-                logging: false,
-                scrollX: 0,
-                scrollY: 0
-            },
-            jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-        };
-
-        html2pdf().set(configOptions).from(targetElement).outputPdf('blob').then((pdfBlob) => {
-            targetElement.style.display = 'none';
-            const blobUrl = URL.createObjectURL(pdfBlob);
-            const downloadLink = document.createElement('a');
-            downloadLink.href = blobUrl;
-            downloadLink.download = `${activeTripName.replace(/\s+/g, '_')}_DetailedSplitReport.pdf`; 
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-            document.body.removeChild(downloadLink);
-            URL.revokeObjectURL(blobUrl);
-        }).catch(() => { targetElement.style.display = 'none'; });
-    });
-
-    document.getElementById('exportBtn').addEventListener('click', exportDataSnapshot);
-    document.getElementById('clearAllBtn').addEventListener('click', clearAllDatabaseLogs);
+// ── Data pull ─────────────────────────────────────────────────────────────
+async function pullDatabaseState() {
+    const data = await apiFetch(`/api/data?trip_id=${currentTripId}`);
+    if (!data) {
+        const loader = document.getElementById("loader");
+        if (loader) loader.textContent = "Error: DB connection failed.";
+        return;
+    }
+    globalCachedData = data;
+    currentCurrency  = data.currency || "INR";
+    currentBudget    = data.budget   || null;
+    const loader = document.getElementById("loader");
+    if (loader) loader.style.display = "none";
+    await pullPeopleList();
+    renderUI();
+    renderBudgetBar();
+    renderDailyAnalytics();
 }
 
-async function pullTripsList(shouldInitialLoadState = false) {
-    try {
-        const response = await fetch('/api/trips');
-        if(!response.ok) throw new Error();
-        globalTripsList = await response.json();
-        
-        if(globalTripsList.length > 0 && !globalTripsList.some(t => t.id === currentTripId)) {
-            currentTripId = globalTripsList[0].id;
-            localStorage.setItem('activeTripId', currentTripId);
-        }
-        
-        renderTripSelectors();
-        if(shouldInitialLoadState) await pullDatabaseState();
-    } catch { updateSyncBadge('error', 'DB Offline'); }
+async function pullTripsList(shouldLoad = false) {
+    const data = await apiFetch("/api/trips");
+    if (!data) return;
+    globalTripsList = Array.isArray(data) ? data : [];
+    if (globalTripsList.length > 0 && !globalTripsList.some(t => t.id === currentTripId)) {
+        _saveTripId(globalTripsList[0].id);
+    }
+    renderTripSelectors();
+    renderTripDashboard();
+    if (shouldLoad) await pullDatabaseState();
 }
 
 async function pullPeopleList() {
-    try {
-        const response = await fetch(`/api/people?trip_id=${currentTripId}`);
-        if(!response.ok) throw new Error();
-        globalPeopleList = await response.json();
-        
-        if(!globalPeopleList.some(p => p.name === 'me')) {
-            globalPeopleList.unshift({ id: 0, name: 'me' });
-        }
-        
-        renderPeopleSelectors();
-    } catch { updateSyncBadge('error', 'DB Offline'); }
+    const data = await apiFetch(`/api/people?trip_id=${currentTripId}`);
+    if (!data) return;
+    globalPeopleList = Array.isArray(data) ? data : [];
+    if (!globalPeopleList.some(p => p.name === RESERVED)) {
+        globalPeopleList.unshift({ id: 0, name: RESERVED, is_active: 1 });
+    }
+    renderPeopleSelectors();
+}
+
+// ── Render UI ─────────────────────────────────────────────────────────────
+function renderUI() {
+    const expCatSel     = document.getElementById("expCategory");
+    const targetMainSel = document.getElementById("targetMainSelect");
+    const deleteCatSel  = document.getElementById("deleteMainSelect");
+    if (!expCatSel || !targetMainSel) return;
+
+    const prev = expCatSel.value;
+    [expCatSel, targetMainSel].forEach(s => s.innerHTML = "");
+    if (deleteCatSel) deleteCatSel.innerHTML = "";
+
+    (globalCachedData?.categories || [])
+        .sort((a, b) => (a.mainCat || "").localeCompare(b.mainCat || ""))
+        .forEach(item => {
+            if (!item.mainCat) return;
+            [expCatSel, targetMainSel, deleteCatSel].forEach(sel => {
+                if (!sel) return;
+                const o = document.createElement("option");
+                o.value = item.mainCat; o.textContent = item.mainCat;
+                sel.appendChild(o);
+            });
+        });
+
+    if (prev && Array.from(expCatSel.options).some(o => o.value === prev)) expCatSel.value = prev;
+    if (expCatSel.value) populateSubDropdown(expCatSel.value);
+    if (deleteCatSel?.value) populateDeleteSubDropdown(deleteCatSel.value);
+
+    renderTripSelectors();
+    renderLogsAndAnalytics();
+    setupCustomDropdownInterceptors();
+}
+
+function renderBudgetBar() {
+    const card = document.getElementById("budgetCard");
+    if (!card) return;
+    if (!currentBudget) { card.style.display = "none"; return; }
+    card.style.display = "block";
+
+    const total   = (globalCachedData?.expenses || []).reduce((s, e) => s + parseFloat(e.amount || 0), 0);
+    const pct     = Math.min((total / currentBudget) * 100, 100).toFixed(1);
+    const over    = total > currentBudget;
+    const remain  = currentBudget - total;
+
+    document.getElementById("budgetTotal").textContent   = fmt(currentBudget);
+    document.getElementById("budgetSpent").textContent   = fmt(total);
+    document.getElementById("budgetRemain").textContent  = over ? `Over by ${fmt(Math.abs(remain))}` : fmt(remain);
+    document.getElementById("budgetPct").textContent     = `${pct}%`;
+    const bar = document.getElementById("budgetBarFill");
+    if (bar) {
+        bar.style.width      = `${pct}%`;
+        bar.style.background = over ? "var(--danger-muted)" : pct > 80 ? "#f59e0b" : "var(--accent-glow)";
+    }
+    const alert = document.getElementById("budgetAlert");
+    if (alert) {
+        alert.style.display  = over ? "block" : "none";
+        if (over) alert.textContent = `⚠ Budget exceeded by ${fmt(Math.abs(remain))}`;
+    }
+}
+
+async function renderDailyAnalytics() {
+    const container = document.getElementById("dailyAnalyticsList");
+    const card      = document.getElementById("dailyAnalyticsCard");
+    if (!container || !card) return;
+
+    const data = await apiFetch(`/api/analytics/daily?trip_id=${currentTripId}`);
+    if (!data || !data.days?.length) { card.style.display = "none"; return; }
+    card.style.display = "block";
+    container.innerHTML = "";
+
+    const maxDay = Math.max(...data.days.map(d => d.total));
+
+    document.getElementById("dailyAvg").textContent     = fmt(data.average_daily);
+    document.getElementById("dailyHighDay").textContent = data.highest_day?.day || "—";
+    document.getElementById("dailyHighAmt").textContent = fmt(data.highest_day?.total);
+
+    data.days.forEach(d => {
+        const pct  = maxDay > 0 ? ((d.total / maxDay) * 100).toFixed(0) : 0;
+        const isHigh = d.day === data.highest_day?.day;
+        const row  = document.createElement("div");
+        row.style.cssText = "margin-bottom:8px";
+        row.innerHTML = `
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);margin-bottom:3px">
+                <span style="color:${isHigh ? "var(--accent-glow)" : "var(--text-pure)"};font-weight:${isHigh ? "600":"400"}">${d.day}</span>
+                <span style="color:var(--text-pure);font-weight:500">${fmt(d.total)} <span style="color:var(--text-dim)">(${d.count} entries)</span></span>
+            </div>
+            <div style="background:var(--bg-deep);border-radius:4px;height:6px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:${isHigh ? "var(--accent-glow)" : "var(--border-line)"};border-radius:4px;transition:width .4s"></div>
+            </div>`;
+        container.appendChild(row);
+    });
+}
+
+function renderTripDashboard() {
+    const grid = document.getElementById("tripDashboardGrid");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    globalTripsList.forEach(trip => {
+        const isActive = trip.id === currentTripId;
+        const sym      = CURRENCY_SYMBOLS[trip.currency] || trip.currency;
+        const spend    = parseFloat(trip.total_spend || 0);
+        const budPct   = trip.budget ? Math.min((spend / trip.budget) * 100, 100).toFixed(0) : null;
+
+        const card = document.createElement("div");
+        card.className = "trip-dash-card" + (isActive ? " active" : "");
+        card.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+                <div>
+                    <div style="font-weight:600;font-size:13px;color:var(--text-pure)">${escapeHtml(trip.name)}</div>
+                    <div style="font-size:10px;color:var(--text-dim);margin-top:2px">${trip.currency} · ${trip.created_at?.slice(0,10) || ""}</div>
+                </div>
+                ${isActive ? `<span style="font-size:10px;padding:2px 7px;background:var(--accent-glow);color:#000;border-radius:10px;font-weight:700">Active</span>` : ""}
+            </div>
+            <div style="font-size:20px;font-weight:700;color:var(--accent-glow);margin-bottom:4px">${sym}${spend.toFixed(2)}</div>
+            ${trip.budget ? `
+                <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">Budget: ${sym}${parseFloat(trip.budget).toFixed(2)}</div>
+                <div style="background:var(--bg-deep);border-radius:3px;height:4px;overflow:hidden">
+                    <div style="height:100%;width:${budPct}%;background:${budPct >= 100 ? "var(--danger-muted)" : "var(--accent-glow)"};border-radius:3px"></div>
+                </div>` : `<div style="font-size:10px;color:var(--text-dim)">No budget set</div>`}
+            ${!isActive ? `<div style="margin-top:8px"><span style="font-size:11px;color:var(--accent-glow);cursor:pointer" data-switch="${trip.id}">Switch →</span></div>` : ""}
+        `;
+        grid.appendChild(card);
+    });
+
+    grid.querySelectorAll("[data-switch]").forEach(el => {
+        el.addEventListener("click", function () {
+            _saveTripId(this.dataset.switch);
+            document.getElementById("globalTripSelector").value = currentTripId;
+            pullDatabaseState().then(() => { pullTripsList(); });
+        });
+    });
 }
 
 function renderTripSelectors() {
-    const headerSel = document.getElementById('globalTripSelector');
-    const settingsList = document.getElementById('settingsTripManagementList');
-    if(!headerSel || !settingsList) return;
+    const headerSel   = document.getElementById("globalTripSelector");
+    const settingsList = document.getElementById("settingsTripManagementList");
+    if (!headerSel || !settingsList) return;
 
-    headerSel.innerHTML = '';
-    settingsList.innerHTML = '';
+    headerSel.innerHTML = "";
+    settingsList.innerHTML = "";
 
     globalTripsList.forEach(trip => {
-        const option = document.createElement('option');
-        option.value = trip.id; option.textContent = trip.name;
-        if(trip.id === currentTripId) option.selected = true;
-        headerSel.appendChild(option);
+        const opt = document.createElement("option");
+        opt.value = trip.id; opt.textContent = trip.name;
+        if (trip.id === currentTripId) opt.selected = true;
+        headerSel.appendChild(opt);
 
-        const row = document.createElement('div');
-        row.className = 'list-item-row';
+        const row = document.createElement("div");
+        row.className = "list-item-row";
+        const isActive = trip.id === currentTripId;
         row.innerHTML = `
-            <span style="font-size:13px; font-weight: ${trip.id === currentTripId ? '700':'400'}; color: ${trip.id === currentTripId ? 'var(--accent-glow)':'var(--text-pure)'}">
-                ${escapeHtml(trip.name)} ${trip.id === currentTripId ? '(Active)':''}
+            <span style="font-size:13px;font-weight:${isActive?"700":"400"};color:${isActive?"var(--accent-glow)":"var(--text-pure)"}">
+                ${escapeHtml(trip.name)} ${isActive ? "(Active)" : ""}
+                <span style="font-size:10px;color:var(--text-dim);margin-left:4px">${trip.currency}</span>
             </span>
-            ${globalTripsList.length > 1 ? `<span style="color:var(--danger-muted); font-size:11px; cursor:pointer;" onclick="deleteTripInstance(${trip.id})">Delete</span>` : ''}
+            ${globalTripsList.length > 1 ? `<span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-trip-btn" data-id="${trip.id}">Delete</span>` : ""}
         `;
         settingsList.appendChild(row);
+    });
+
+    settingsList.querySelectorAll(".del-trip-btn").forEach(el => {
+        el.addEventListener("click", () => deleteTripInstance(parseInt(el.dataset.id)));
     });
 }
 
 function renderPeopleSelectors() {
-    const expPaidByDropdown = document.getElementById('expPaidBy');
-    const splitConsumersContainer = document.getElementById('splitConsumersContainer');
-    const settingsPeopleList = document.getElementById('settingsPeopleManagementList');
-    
-    if(!expPaidByDropdown || !splitConsumersContainer || !settingsPeopleList) return;
+    const paidByDrop  = document.getElementById("expPaidBy");
+    const splitGrid   = document.getElementById("splitConsumersContainer");
+    const settingsList = document.getElementById("settingsPeopleManagementList");
+    if (!paidByDrop || !splitGrid || !settingsList) return;
 
-    expPaidByDropdown.innerHTML = '';
-    splitConsumersContainer.innerHTML = '';
-    settingsPeopleList.innerHTML = '';
+    paidByDrop.innerHTML = "";
+    splitGrid.innerHTML  = "";
+    settingsList.innerHTML = "";
 
-    let structuralList = globalPeopleList.filter(p => p.name !== 'me');
-    structuralList.sort((a, b) => a.name.localeCompare(b.name));
-    structuralList.unshift({ id: 0, name: 'me' });
+    const active   = globalPeopleList.filter(p => p?.name === RESERVED || p?.is_active);
+    const inactive = globalPeopleList.filter(p => p?.name !== RESERVED && !p?.is_active);
+    const ordered  = [
+        { id:0, name:RESERVED, is_active:1 },
+        ...active.filter(p => p.name !== RESERVED).sort((a,b) => a.name.localeCompare(b.name))
+    ];
 
-    structuralList.forEach(person => {
-        const opt = document.createElement('option');
+    ordered.forEach(person => {
+        const opt = document.createElement("option");
         opt.value = person.name; opt.textContent = person.name;
-        expPaidByDropdown.appendChild(opt);
+        paidByDrop.appendChild(opt);
 
-        const checkLabel = document.createElement('label');
-        checkLabel.className = 'checkbox-pill-item';
-        checkLabel.innerHTML = `
-            <input type="checkbox" class="expense-split-checkbox" value="${escapeHtml(person.name)}" checked>
-            <span>${escapeHtml(person.name)}</span>
-        `;
-        splitConsumersContainer.appendChild(checkLabel);
+        const lbl = document.createElement("label");
+        lbl.className = "checkbox-pill-item";
+        lbl.innerHTML = `<input type="checkbox" class="expense-split-checkbox" value="${escapeHtml(person.name)}" checked><span>${escapeHtml(person.name)}</span>`;
+        splitGrid.appendChild(lbl);
 
-        const row = document.createElement('div');
-        row.className = 'list-item-row';
+        const hasSpend = (globalCachedData?.expenses || []).some(exp =>
+            exp.paid_by === person.name || (Array.isArray(exp.split_with) && exp.split_with.includes(person.name))
+        );
+
+        const row = document.createElement("div");
+        row.className = "list-item-row";
+        let actionHtml;
+        if (person.name === RESERVED) {
+            actionHtml = `<span style="color:var(--text-dim);font-size:11px">Locked</span>`;
+        } else if (hasSpend) {
+            actionHtml = `<span style="color:var(--text-dim);font-size:11px" title="Has expense history on this trip">Has expenses</span>`;
+        } else {
+            actionHtml = `<span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="rm-person-btn" data-id="${person.id}">Remove</span>`;
+        }
         row.innerHTML = `
-            <span style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-pure)">
-                <span class="ui-icon icon-person" style="width:14px; height:14px;"></span> ${escapeHtml(person.name)}
+            <span style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-pure)">
+                <span class="ui-icon icon-person" style="width:14px;height:14px"></span>${escapeHtml(person.name)}
             </span>
-            ${person.name !== 'me' ? `<span style="color:var(--danger-muted); font-size:11px; cursor:pointer;" onclick="deletePersonInstance(${person.id})">Remove</span>` : `<span style="color:var(--text-dim); font-size:11px;">Locked Default</span>`}
+            ${actionHtml}
         `;
-        settingsPeopleList.appendChild(row);
+        settingsList.appendChild(row);
     });
-}
 
-async function deleteTripInstance(id) {
-    if(!confirm("Are you sure? This will permanently wipe out all tracking logs inside this trip!")) return;
-    try {
-        const response = await fetch('/api/trips/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id })
-        });
-        if(response.ok) {
-            if(currentTripId === id) localStorage.removeItem('activeTripId');
-            await pullTripsList(true);
-        } else { alert("Failed to complete trip removal operations."); }
-    } catch { alert("Network operation exception."); }
-}
-
-async function deletePersonInstance(id) {
-    if(!confirm("Remove person from current roster layout? Existing history remains untouched.")) return;
-    try {
-        const response = await fetch('/api/people/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id })
-        });
-        if(response.ok) { await pullDatabaseState(); }
-    } catch { alert("Network exception."); }
-}
-
-function updateSyncBadge(status, message) {
-    const badge = document.getElementById('syncBadge');
-    const text = document.getElementById('syncStatusText');
-    if(!badge || !text) return;
-    badge.className = 'sync-status-pill ' + status;
-    text.textContent = message;
-}
-
-async function makeApiRequest(url, payload = null) {
-    try {
-        const options = payload ? {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        } : { method: 'GET' };
-
-        const response = await fetch(url, options);
-        if (!response.ok) throw new Error();
-        updateSyncBadge('synced', 'SQLite DB Active');
-        return true;
-    } catch {
-        updateSyncBadge('error', 'DB Conn Error');
-        return false;
-    }
-}
-
-async function pullDatabaseState() {
-    try {
-        const response = await fetch(`/api/data?trip_id=${currentTripId}`);
-        if(!response.ok) throw new Error();
-        globalCachedData = await response.json();
-        updateSyncBadge('synced', 'SQLite Connected');
-        
-        await pullPeopleList(); 
-        renderUI();
-    } catch { updateSyncBadge('error', 'DB Offline'); }
-}
-
-function renderUI() {
-    const expCatSel = document.getElementById('expCategory');
-    const targetMainSel = document.getElementById('targetMainSelect');
-    if(!expCatSel || !targetMainSel) return;
-    
-    const previousSelection = expCatSel.value;
-    expCatSel.innerHTML = '';
-    targetMainSel.innerHTML = '';
-
-    if (globalCachedData.categories && globalCachedData.categories.length > 0) {
-        globalCachedData.categories.sort((a, b) => a.mainCat.localeCompare(b.mainCat));
-        globalCachedData.categories.forEach(item => {
-            const opt1 = document.createElement('option'); opt1.value = item.mainCat; opt1.textContent = item.mainCat;
-            expCatSel.appendChild(opt1);
-            const opt2 = document.createElement('option'); opt2.value = item.mainCat; opt2.textContent = item.mainCat;
-            targetMainSel.appendChild(opt2);
+    // Show soft-deleted members as greyed out
+    if (inactive.length > 0) {
+        const lbl = document.createElement("div");
+        lbl.style.cssText = "font-size:10px;color:var(--text-dim);padding:8px 10px 2px";
+        lbl.textContent = "Inactive (historical references preserved)";
+        settingsList.appendChild(lbl);
+        inactive.forEach(person => {
+            const row = document.createElement("div");
+            row.className = "list-item-row";
+            row.style.opacity = "0.45";
+            row.innerHTML = `
+                <span style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-dim)">
+                    <span class="ui-icon icon-person" style="width:14px;height:14px"></span>${escapeHtml(person.name)}
+                    <span style="font-size:10px">(inactive)</span>
+                </span>
+                <span style="color:var(--accent-glow);font-size:11px;cursor:pointer" class="restore-person-btn" data-name="${escapeHtml(person.name)}">Restore</span>
+            `;
+            settingsList.appendChild(row);
         });
     }
 
-    if(previousSelection && Array.from(expCatSel.options).some(o => o.value === previousSelection)) {
-        expCatSel.value = previousSelection;
-    }
-    
-    if(expCatSel.value) populateSubDropdown(expCatSel.value);
-    renderLogsAndAnalytics();
+    settingsList.querySelectorAll(".rm-person-btn").forEach(el =>
+        el.addEventListener("click", () => deletePersonInstance(parseInt(el.dataset.id)))
+    );
+    settingsList.querySelectorAll(".restore-person-btn").forEach(el =>
+        el.addEventListener("click", () => restorePersonInstance(el.dataset.name))
+    );
 }
 
 function populateSubDropdown(mainCatName) {
-    const subSelect = document.getElementById('expSubCategory');
-    if(!subSelect) return;
-    subSelect.innerHTML = '';
-    
-    if (!globalCachedData.categories) return;
-    const record = globalCachedData.categories.find(c => c.mainCat === mainCatName);
-    if (record && record.subs) {
-        record.subs.sort().forEach(sub => {
-            const opt = document.createElement('option'); opt.value = sub; opt.textContent = sub;
-            subSelect.appendChild(opt);
+    const sub = document.getElementById("expSubCategory");
+    if (!sub) return;
+    sub.innerHTML = "";
+    const record = (globalCachedData?.categories || []).find(c => c.mainCat === mainCatName);
+    if (record?.subs) {
+        [...record.subs].sort().forEach(s => {
+            const o = document.createElement("option"); o.value = s; o.textContent = s;
+            sub.appendChild(o);
+        });
+    }
+}
+
+function populateDeleteSubDropdown(mainCatName) {
+    const sub = document.getElementById("deleteSubSelect");
+    if (!sub) return;
+    sub.innerHTML = `<option value="">— select sub-category —</option>`;
+    const record = (globalCachedData?.categories || []).find(c => c.mainCat === mainCatName);
+    if (record?.subs) {
+        [...record.subs].sort().forEach(s => {
+            const o = document.createElement("option"); o.value = s; o.textContent = s;
+            sub.appendChild(o);
+        });
+    }
+}
+
+function populateEditSubDropdown(mainCatName, currentVal) {
+    const sub = document.getElementById("editExpSubCat");
+    if (!sub) return;
+    sub.innerHTML = "";
+    const record = (globalCachedData?.categories || []).find(c => c.mainCat === mainCatName);
+    if (record?.subs) {
+        [...record.subs].sort().forEach(s => {
+            const o = document.createElement("option"); o.value = s; o.textContent = s;
+            if (s === currentVal) o.selected = true;
+            sub.appendChild(o);
         });
     }
 }
 
 function renderLogsAndAnalytics() {
-    const historyList = document.getElementById('historyList');
-    const analyticsList = document.getElementById('analyticsList');
-    const totalText = document.getElementById('totalSpend');
-    const debtsList = document.getElementById('groupDebtsList');
-    const personTotalsSummaryList = document.getElementById('personTotalsSummaryList');
-    const personTotalsSummaryCard = document.getElementById('personTotalsSummaryCard');
-    
-    const printTableLogBody = document.getElementById('printTableLogBody');
-    const printAnalyticsSummary = document.getElementById('printAnalyticsSummary');
-    const printGrandTotal = document.getElementById('printGrandTotal');
+    const historyList      = document.getElementById("historyList");
+    const analyticsList    = document.getElementById("analyticsList");
+    const totalText        = document.getElementById("totalSpend");
+    const debtsList        = document.getElementById("groupDebtsList");
+    const personSummList   = document.getElementById("personTotalsSummaryList");
+    const personSummCard   = document.getElementById("personTotalsSummaryCard");
+    const printBody        = document.getElementById("printTableLogBody");
+    const printAnalytics   = document.getElementById("printAnalyticsSummary");
+    const printPersonTotals = document.getElementById("printPersonTotalsSummary");
+    const printGrandTotal  = document.getElementById("printGrandTotal");
 
-    if(!historyList || !analyticsList || !totalText) return;
-    
-    historyList.innerHTML = '';
-    analyticsList.innerHTML = '';
-    if(debtsList) debtsList.innerHTML = '';
-    if(personTotalsSummaryList) personTotalsSummaryList.innerHTML = '';
-    if(printTableLogBody) printTableLogBody.innerHTML = '';
-    if(printAnalyticsSummary) printAnalyticsSummary.innerHTML = '';
+    if (!historyList || !analyticsList || !totalText) return;
+    [historyList, analyticsList].forEach(el => el.innerHTML = "");
+    if (debtsList)    debtsList.innerHTML    = "";
+    if (personSummList) personSummList.innerHTML = "";
+    if (printBody)    printBody.innerHTML    = "";
+    if (printAnalytics) printAnalytics.innerHTML = "";
+    if (printPersonTotals) printPersonTotals.innerHTML = "";
 
-    let grandTotal = 0;
-    let reportStructure = {};
-    
-    let balanceSheet = {};
-    let runningPersonTotals = {};
-    
-    globalPeopleList.forEach(p => { 
-        balanceSheet[p.name] = 0.0; 
-        runningPersonTotals[p.name] = 0.0;
+    let grandTotal       = 0;
+    let reportStructure  = {};
+    let balanceSheet     = {};
+    let personTotals     = {};
+
+    globalPeopleList.forEach(p => {
+        if (p?.name) { balanceSheet[p.name] = 0; personTotals[p.name] = 0; }
+    });
+    (globalCachedData?.categories || []).forEach(item => {
+        if (!item.mainCat) return;
+        reportStructure[item.mainCat] = { total:0, subs:{}, personShares:{} };
+        globalPeopleList.forEach(p => { if (p?.name) reportStructure[item.mainCat].personShares[p.name] = 0; });
+        (item.subs || []).forEach(s => { reportStructure[item.mainCat].subs[s] = 0; });
     });
 
-    if (globalCachedData.categories) {
-        globalCachedData.categories.forEach(item => {
-            reportStructure[item.mainCat] = { total: 0, subs: {}, personShares: {} };
-            globalPeopleList.forEach(p => { reportStructure[item.mainCat].personShares[p.name] = 0.0; });
-            if (item.subs) {
-                item.subs.forEach(sub => { reportStructure[item.mainCat].subs[sub] = 0; });
-            }
-        });
-    }
+    (globalCachedData?.expenses || []).forEach(exp => {
+        const amt       = parseFloat(exp.amount || 0);
+        const payer     = exp.paid_by || "?";
+        let consumers   = Array.isArray(exp.split_with) && exp.split_with.length ? exp.split_with : [RESERVED];
+        const share     = amt / consumers.length;
+        grandTotal     += amt;
 
-    if (globalCachedData.expenses && globalCachedData.expenses.length > 0) {
-        globalCachedData.expenses.forEach(exp => {
-            const amt = parseFloat(exp.amount || 0);
-            const payer = exp.paid_by;
-            
-            let consumers = exp.split_with || [];
-            if(consumers.length === 0) { consumers = ["me"]; }
-            
-            grandTotal += amt;
-            const individualShare = amt / consumers.length;
-            
-            if (!(payer in balanceSheet)) balanceSheet[payer] = 0.0;
-            balanceSheet[payer] += amt;
-            
-            consumers.forEach(consumer => {
-                if (!(consumer in balanceSheet)) balanceSheet[consumer] = 0.0;
-                balanceSheet[consumer] -= individualShare;
-                
-                if (!(consumer in runningPersonTotals)) runningPersonTotals[consumer] = 0.0;
-                runningPersonTotals[consumer] += individualShare;
-            });
-
-            const descriptionStr = exp.description || '';
-            const mainCatStr = exp.main_cat || 'Unassigned';
-            const subCatStr = exp.sub_cat || 'Unassigned';
-
-            if (!reportStructure[mainCatStr]) {
-                reportStructure[mainCatStr] = { total: 0, subs: {}, personShares: {} };
-            }
-            if (!reportStructure[mainCatStr].personShares) {
-                reportStructure[mainCatStr].personShares = {};
-            }
-            if (!reportStructure[mainCatStr].subs[subCatStr]) {
-                reportStructure[mainCatStr].subs[subCatStr] = 0;
-            }
-            
-            reportStructure[mainCatStr].total += amt;
-            reportStructure[mainCatStr].subs[subCatStr] += amt;
-            
-            consumers.forEach(consumer => {
-                if (!reportStructure[mainCatStr].personShares[consumer]) {
-                    reportStructure[mainCatStr].personShares[consumer] = 0.0;
-                }
-                reportStructure[mainCatStr].personShares[consumer] += individualShare;
-            });
-
-            const dateObj = new Date(exp.timestamp);
-            const displayTime = isNaN(dateObj) ? 'N/A' : dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-
-            const consumersBadges = consumers.map(c => `<span style="font-size:10px; padding:2px 5px; background:var(--bg-deep); border:1px solid var(--border-line); border-radius:4px; margin-right:2px;">${escapeHtml(c)}</span>`).join('');
-
-            const cardRow = document.createElement('div');
-            cardRow.className = 'log-item';
-            cardRow.innerHTML = `
-                <div>
-                    <div style="font-weight:500; font-size:14px;">${escapeHtml(descriptionStr)}</div>
-                    <div class="log-meta" style="margin-bottom:6px;">
-                        <span>Paid by <b>${escapeHtml(payer)}</b></span> &middot; 
-                        <span>${displayTime}</span> &middot; 
-                        <span class="tag-pill">${escapeHtml(mainCatStr)} &middot; ${escapeHtml(subCatStr)}</span>
-                    </div>
-                    <div style="display:flex; flex-wrap:wrap; gap:2px; margin-top:4px;">
-                        <span style="font-size:10px; color:var(--text-dim); align-self:center; margin-right:4px;">Split:</span> ${consumersBadges}
-                    </div>
-                </div>
-                <div style="text-align:right; flex-shrink:0;">
-                    <div style="font-weight:600; color:var(--text-pure); font-size:14px; margin-bottom:4px;">₹${amt.toFixed(2)}</div>
-                    <span style="color:var(--danger-muted); font-size:11px; cursor:pointer;" onclick="deleteExpenseEntry(${exp.id})">Remove</span>
-                </div>
-            `;
-            historyList.appendChild(cardRow);
-
-            if (printTableLogBody) {
-                const printRow = document.createElement('tr');
-                printRow.innerHTML = `
-                    <td>${displayTime}</td>
-                    <td style="font-weight: 500;">${escapeHtml(descriptionStr)}<br><small style="color:#6b7280; font-weight:400;">Payer: ${escapeHtml(payer)}</small></td>
-                    <td><span style="font-size:11px; color:#4b5563;">${consumers.join(', ')}</span></td>
-                    <td class="print-amount">₹${amt.toFixed(2)}</td>
-                `;
-                printTableLogBody.appendChild(printRow);
-            }
-        });
-    }
-
-    totalText.textContent = `₹${grandTotal.toFixed(2)}`;
-    if (printGrandTotal) printGrandTotal.textContent = `₹${grandTotal.toFixed(2)}`;
-
-    // Group Debt Matrix Calculations
-    if (globalPeopleList.length > 0 && debtsList) {
-        document.getElementById('groupBreakdownCard').style.display = 'block';
-        
-        let debtors = [];
-        let creditors = [];
-        
-        Object.keys(balanceSheet).forEach(name => {
-            let bal = balanceSheet[name];
-            if (bal < -0.01) {
-                debtors.push({ name: name, balance: Math.abs(bal) });
-            } else if (bal > 0.01) {
-                creditors.push({ name: name, balance: bal });
-            }
+        if (!(payer in balanceSheet)) balanceSheet[payer] = 0;
+        balanceSheet[payer] += amt;
+        consumers.forEach(c => {
+            if (!(c in balanceSheet))  balanceSheet[c]  = 0;
+            if (!(c in personTotals))  personTotals[c]  = 0;
+            balanceSheet[c] -= share;
+            personTotals[c] += share;
         });
 
-        let dIdx = 0; let cIdx = 0;
-        while (dIdx < debtors.length && cIdx < creditors.length) {
-            let debtor = debtors[dIdx];
-            let creditor = creditors[cIdx];
-            let settlementAmount = Math.min(debtor.balance, creditor.balance);
-            
-            debtor.balance -= settlementAmount;
-            creditor.balance -= settlementAmount;
-            
-            const pRow = document.createElement('div');
-            pRow.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding: 6px 0; border-bottom: 1px solid var(--border-line);";
-            pRow.innerHTML = `
-                <span style="display:flex; align-items:center; gap:6px;">
-                    <span class="ui-icon icon-arrow-right" style="color:var(--danger-muted); width:14px; height:14px;"></span>
-                    <span><b>${escapeHtml(debtor.name)}</b> owes <b>${escapeHtml(creditor.name)}</b></span>
-                </span>
-                <span style="color:var(--danger-muted); font-weight:600;">₹${settlementAmount.toFixed(2)}</span>
-            `;
-            debtsList.appendChild(pRow);
-            
-            if (debtor.balance <= 0.01) dIdx++;
-            if (creditor.balance <= 0.01) cIdx++;
-        }
-        
-        if (debtsList.children.length === 0) {
-            debtsList.innerHTML = `<p style="color:var(--success-glow); text-align:center; font-size:12px; margin:4px 0;">🎉 All transactions are perfectly squared up!</p>`;
-        }
-    } else if (debtsList) {
-        document.getElementById('groupBreakdownCard').style.display = 'none';
-    }
+        const main = exp.main_cat || "Unassigned";
+        const sub  = exp.sub_cat  || "Unassigned";
+        if (!reportStructure[main]) reportStructure[main] = { total:0, subs:{}, personShares:{} };
+        reportStructure[main].total += amt;
+        reportStructure[main].subs[sub] = (reportStructure[main].subs[sub] || 0) + amt;
+        consumers.forEach(c => {
+            reportStructure[main].personShares[c] = (reportStructure[main].personShares[c] || 0) + share;
+        });
 
-    // Category Chart Generator loop with Per Person allocations
-    Object.keys(reportStructure).forEach(main => {
-        const data = reportStructure[main];
-        if (data.total > 0) {
-            const percentage = grandTotal > 0 ? ((data.total / grandTotal) * 100).toFixed(0) : 0;
-            
-            let subHtml = '';
-            let printSubHtml = '';
-            Object.keys(data.subs).forEach(sub => {
-                const subAmt = data.subs[sub];
-                if (subAmt > 0) {
-                    const subPercentage = ((subAmt / data.total) * 100).toFixed(0);
-                    const metricRow = `
-                        <div class="sub-metric-row">
-                            <span>↳ ${escapeHtml(sub)} <span style="color:var(--text-dim); font-size:9px;">(${subPercentage}%)</span></span>
-                            <span>₹${subAmt.toFixed(2)}</span>
-                        </div>
-                    `;
-                    subHtml += metricRow;
-                    printSubHtml += `<div style="display:flex; justify-content:space-between; font-size:11px; color:#4b5563; padding-left:12px; margin-top:2px;"><span>↳ ${escapeHtml(sub)} (${subPercentage}%)</span><span>₹${subAmt.toFixed(2)}</span></div>`;
-                }
-            });
+        const dateObj  = new Date(exp.timestamp);
+        const dispTime = isNaN(dateObj) ? "N/A" : `${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`;
+        const badges   = consumers.map(c => `<span style="font-size:10px;padding:2px 5px;background:var(--bg-deep);border:1px solid var(--border-line);border-radius:4px;margin-right:2px">${escapeHtml(c)}</span>`).join("");
 
-            let personSharesHtml = '';
-            let printPersonSharesHtml = '';
-            if (data.personShares) {
-                Object.keys(data.personShares).forEach(pName => {
-                    const pShare = data.personShares[pName];
-                    if (pShare > 0.01) {
-                        personSharesHtml += `<span class="person-spend-badge"><b>${escapeHtml(pName)}</b>: ₹${pShare.toFixed(2)}</span>`;
-                        printPersonSharesHtml += `<span style="font-size:10px; padding:1px 4px; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:3px; margin-right:4px; color:#374151;"><b>${escapeHtml(pName)}</b>: ₹${pShare.toFixed(2)}</span>`;
-                    }
-                });
-            }
-
-            const div = document.createElement('div');
-            div.className = 'chart-row';
-            div.innerHTML = `
-                <div class="chart-labels">
-                    <span style="color:var(--text-pure); font-size:12px;">${escapeHtml(main)} <span style="color:var(--text-dim); font-size:10px; margin-left:4px;">${percentage}%</span></span>
-                    <strong style="font-weight:500;">₹${data.total.toFixed(2)}</strong>
+        const card = document.createElement("div");
+        card.className = "log-item";
+        card.innerHTML = `
+            <div style="flex:1;min-width:0">
+                <div style="font-weight:500;font-size:14px">${escapeHtml(exp.description)}</div>
+                <div class="log-meta" style="margin-bottom:6px">
+                    <span>Paid by <b>${escapeHtml(payer)}</b></span> &middot;
+                    <span>${dispTime}</span> &middot;
+                    <span class="tag-pill">${escapeHtml(main)} · ${escapeHtml(sub)}</span>
                 </div>
-                <div class="chart-bar-bg"><div class="chart-bar-fill" style="width: ${percentage}%"></div></div>
-                <div class="sub-metrics-list">${subHtml}</div>
-                <div class="person-spend-badge-container">
-                    ${personSharesHtml || '<span class="person-spend-badge" style="border:none; padding:0;">No individual shares recorded</span>'}
+                <div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:4px">
+                    <span style="font-size:10px;color:var(--text-dim);align-self:center;margin-right:4px">Split:</span>${badges}
                 </div>
-            `;
-            analyticsList.appendChild(div);
+            </div>
+            <div style="text-align:right;flex-shrink:0;margin-left:8px">
+                <div style="font-weight:600;color:var(--text-pure);font-size:14px;margin-bottom:4px">${fmt(amt)}</div>
+                <div style="display:flex;gap:8px;justify-content:flex-end">
+                    <span style="color:var(--accent-glow);font-size:11px;cursor:pointer" class="edit-exp-btn" data-id="${exp.id}">Edit</span>
+                    <span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-exp-btn" data-id="${exp.id}">Delete</span>
+                </div>
+            </div>`;
+        historyList.appendChild(card);
 
-            if (printAnalyticsSummary) {
-                const printDiv = document.createElement('div');
-                printDiv.style.cssText = "margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #e5e7eb;";
-                printDiv.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:12px; color:#111827;">
-                        <span>${escapeHtml(main)} (${percentage}%)</span>
-                        <span>₹${data.total.toFixed(2)}</span>
-                    </div>
-                    <div style="margin-top:2px;">${printSubHtml}</div>
-                    <div style="display:flex; flex-wrap:wrap; gap:2px; margin-top:6px; padding-top:4px; border-top:1px dashed #e5e7eb;">${printPersonSharesHtml}</div>
-                `;
-                printAnalyticsSummary.appendChild(printDiv);
-            }
+        if (printBody) {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td>${escapeHtml(dispTime)}</td><td style="font-weight:500">${escapeHtml(exp.description)}<br><small>Payer: ${escapeHtml(payer)}</small></td><td>${consumers.map(escapeHtml).join(", ")}</td><td class="print-amount">${fmt(amt)}</td>`;
+            printBody.appendChild(tr);
         }
     });
 
-    // Render: Final Aggregated Spends per Person Summary Box
-    if (personTotalsSummaryList && personTotalsSummaryCard) {
-        let sortedTotals = Object.keys(runningPersonTotals).filter(pName => runningPersonTotals[pName] > 0);
-        sortedTotals.sort((a, b) => runningPersonTotals[b] - runningPersonTotals[a]);
+    historyList.querySelectorAll(".del-exp-btn").forEach(el =>
+        el.addEventListener("click", () => deleteExpenseEntry(parseInt(el.dataset.id)))
+    );
+    historyList.querySelectorAll(".edit-exp-btn").forEach(el =>
+        el.addEventListener("click", () => openEditExpenseModal(parseInt(el.dataset.id)))
+    );
 
-        if (sortedTotals.length > 0) {
-            personTotalsSummaryCard.style.display = 'block';
-            
-            if (printAnalyticsSummary) {
-                const summaryTitle = document.createElement('div');
-                summaryTitle.className = 'print-section-title';
-                summaryTitle.style.cssText = "margin-top:16px; margin-bottom:8px; font-weight:700; text-transform:uppercase; font-size:11px; color:#4b5563; border-bottom:2px solid #374151; padding-bottom:3px;";
-                summaryTitle.textContent = "Total Spend Summary per Person";
-                printAnalyticsSummary.appendChild(summaryTitle);
-            }
+    totalText.textContent = fmt(grandTotal);
+    if (printGrandTotal) printGrandTotal.textContent = fmt(grandTotal);
 
-            sortedTotals.forEach(pName => {
-                const totalSpend = runningPersonTotals[pName];
-                const row = document.createElement('div');
-                row.className = 'summary-total-row';
-                row.innerHTML = `
-                    <span style="display:flex; align-items:center; gap:8px;">
-                        <span class="ui-icon icon-person" style="width:14px; height:14px;"></span>
-                        <span><b>${escapeHtml(pName)}</b></span>
-                    </span>
-                    <span style="color:var(--accent-glow); font-weight:600;">₹${totalSpend.toFixed(2)}</span>
-                `;
-                personTotalsSummaryList.appendChild(row);
+    // Debt settlement
+    if (debtsList) {
+        const groupCard = document.getElementById("groupBreakdownCard");
+        let debtors = [], creditors = [];
+        Object.entries(balanceSheet).forEach(([name, bal]) => {
+            if (bal < -0.01)  debtors.push({ name, balance: Math.abs(bal) });
+            else if (bal > 0.01) creditors.push({ name, balance: bal });
+        });
+        let d = 0, c = 0;
+        while (d < debtors.length && c < creditors.length) {
+            const settle = Math.min(debtors[d].balance, creditors[c].balance);
+            debtors[d].balance -= settle; creditors[c].balance -= settle;
+            const row = document.createElement("div");
+            row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-line)";
+            row.innerHTML = `<span><span class="ui-icon icon-arrow-right" style="color:var(--danger-muted);width:14px;height:14px"></span> <b>${escapeHtml(debtors[d].name)}</b> owes <b>${escapeHtml(creditors[c].name)}</b></span><span style="color:var(--danger-muted);font-weight:600">${fmt(settle)}</span>`;
+            debtsList.appendChild(row);
+            if (debtors[d].balance   <= 0.01) d++;
+            if (creditors[c].balance <= 0.01) c++;
+        }
+        if (!debtsList.children.length) debtsList.innerHTML = `<p style="color:var(--success-glow);text-align:center;font-size:12px;margin:4px 0">🎉 All squared up!</p>`;
+        if (groupCard) groupCard.style.display = globalPeopleList.length > 0 ? "block" : "none";
+    }
 
-                if (printAnalyticsSummary) {
-                    const printTotalRow = document.createElement('div');
-                    printTotalRow.style.cssText = "display:flex; justify-content:space-between; font-size:12px; padding:4px 0; color:#111827;";
-                    printTotalRow.innerHTML = `<span>👤 <b>${escapeHtml(pName)}</b></span><span style="font-weight:600;">₹${totalSpend.toFixed(2)}</span>`;
-                    printAnalyticsSummary.appendChild(printTotalRow);
-                }
+    // Analytics
+    Object.entries(reportStructure).forEach(([main, data]) => {
+        if (data.total <= 0) return;
+        const pct  = grandTotal > 0 ? ((data.total / grandTotal) * 100).toFixed(0) : 0;
+        let subHtml = "", shareHtml = "";
+        Object.entries(data.subs).forEach(([s, a]) => {
+            if (a <= 0) return;
+            const sp = ((a / data.total) * 100).toFixed(0);
+            subHtml += `<div class="sub-metric-row"><span>↳ ${escapeHtml(s)} <span style="color:var(--text-dim);font-size:9px">(${sp}%)</span></span><span>${fmt(a)}</span></div>`;
+        });
+        Object.entries(data.personShares).forEach(([name, s]) => {
+            if (s < 0.01) return;
+            shareHtml += `<span class="person-spend-badge"><b>${escapeHtml(name)}</b>: ${fmt(s)}</span>`;
+        });
+        const div = document.createElement("div");
+        div.className = "chart-row";
+        div.innerHTML = `
+            <div class="chart-labels">
+                <span style="color:var(--text-pure);font-size:12px">${escapeHtml(main)} <span style="color:var(--text-dim);font-size:10px">${pct}%</span></span>
+                <strong style="font-weight:500">${fmt(data.total)}</strong>
+            </div>
+            <div class="chart-bar-bg"><div class="chart-bar-fill" style="width:${pct}%"></div></div>
+            <div class="sub-metrics-list">${subHtml}</div>
+            <div class="person-spend-badge-container">${shareHtml || `<span class="person-spend-badge" style="border:none;padding:0">No individual shares</span>`}</div>`;
+        analyticsList.appendChild(div);
+
+        // Also populate print analytics
+        if (printAnalytics) {
+            const printDiv = document.createElement("div");
+            printDiv.className = "print-chart-row";
+            let printSubHtml = "";
+            Object.entries(data.subs).forEach(([s, a]) => {
+                if (a <= 0) return;
+                const sp = ((a / data.total) * 100).toFixed(0);
+                printSubHtml += `<div class="print-sub-row"><span>↳ ${escapeHtml(s)} (${sp}%)</span><span>${fmt(a)}</span></div>`;
             });
-        } else {
-            personTotalsSummaryCard.style.display = 'none';
+            printDiv.innerHTML = `
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <strong>${escapeHtml(main)} (${pct}%)</strong>
+                    <strong>${fmt(data.total)}</strong>
+                </div>
+                ${printSubHtml}`;
+            printAnalytics.appendChild(printDiv);
+        }
+    });
+
+    // Person totals
+    if (personSummList && personSummCard) {
+        const sorted = Object.keys(personTotals).filter(n => personTotals[n] > 0)
+            .sort((a,b) => personTotals[b] - personTotals[a]);
+        personSummCard.style.display = sorted.length ? "block" : "none";
+        sorted.forEach(name => {
+            const row = document.createElement("div");
+            row.className = "summary-total-row";
+            row.innerHTML = `<span style="display:flex;align-items:center;gap:8px"><span class="ui-icon icon-person" style="width:14px;height:14px"></span><b>${escapeHtml(name)}</b></span><span style="color:var(--accent-glow);font-weight:600">${fmt(personTotals[name])}</span>`;
+            personSummList.appendChild(row);
+        });
+    }
+
+    // Print person totals
+    if (printPersonTotals) {
+        const sorted = Object.keys(personTotals).filter(n => personTotals[n] > 0)
+            .sort((a,b) => personTotals[b] - personTotals[a]);
+        sorted.forEach(name => {
+            const row = document.createElement("div");
+            row.className = "print-chart-row";
+            row.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e5e7eb">
+                    <span><strong>${escapeHtml(name)}</strong></span>
+                    <span style="font-weight:600">${fmt(personTotals[name])}</span>
+                </div>`;
+            printPersonTotals.appendChild(row);
+        });
+        if (!sorted.length) {
+            printPersonTotals.innerHTML = `<p style="color:#9ca3af;font-size:12px;padding:8px 0">No individual spending recorded.</p>`;
         }
     }
 
-    if(!globalCachedData.expenses || globalCachedData.expenses.length === 0) {
-        historyList.innerHTML = `<p style="color:var(--text-dim); text-align:center; font-size:12px; padding:20px 0;">No logs found inside database.</p>`;
-        analyticsList.innerHTML = `<p style="color:var(--text-dim); text-align:center; font-size:12px; padding:16px 0;">No metrics compiled.</p>`;
-        if(personTotalsSummaryCard) personTotalsSummaryCard.style.display = 'none';
+    if (!globalCachedData?.expenses?.length) {
+        historyList.innerHTML  = `<p style="color:var(--text-dim);text-align:center;font-size:12px;padding:20px 0">No logs yet.</p>`;
+        analyticsList.innerHTML = `<p style="color:var(--text-dim);text-align:center;font-size:12px;padding:16px 0">No metrics yet.</p>`;
+        if (personSummCard) personSummCard.style.display = "none";
     }
 }
 
-document.getElementById('expenseForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    const paidBy = document.getElementById('expPaidBy').value;
-    if(!paidBy) { alert("Please select a valid payer entry."); return; }
+// ── Edit expense modal ────────────────────────────────────────────────────
+function openEditExpenseModal(expId) {
+    const exp = globalCachedData?.expenses?.find(e => e.id === expId);
+    if (!exp) return;
 
-    const checkedBoxes = document.querySelectorAll('.expense-split-checkbox:checked');
-    let splitWith = Array.from(checkedBoxes).map(cb => cb.value);
-    if(splitWith.length === 0) { splitWith = ["me"]; }
+    const modal = document.getElementById("editExpenseModal");
+    if (!modal) return;
 
-    const timestamp = document.getElementById('expDateTime').value;
-    const desc = document.getElementById('expDesc').value.trim();
-    const amount = document.getElementById('expAmount').value;
-    const mainCat = document.getElementById('expCategory').value;
-    const subCat = document.getElementById('expSubCategory').value;
+    document.getElementById("editExpId").value          = exp.id;
+    document.getElementById("editExpDesc").value        = exp.description;
+    document.getElementById("editExpAmount").value      = exp.amount;
+    document.getElementById("editExpDateTime").value    = exp.timestamp?.slice(0,16) || "";
 
-    const ok = await makeApiRequest('/api/expense/add', { 
-        desc, amount, mainCat, subCat, timestamp, paidBy, trip_id: currentTripId, splitWith 
+    // Populate payer dropdown
+    const paidBySel = document.getElementById("editExpPaidBy");
+    paidBySel.innerHTML = "";
+    const people = [
+        { name:RESERVED },
+        ...globalPeopleList.filter(p => p.name !== RESERVED && p.is_active).sort((a,b) => a.name.localeCompare(b.name))
+    ];
+    people.forEach(p => {
+        const o = document.createElement("option");
+        o.value = p.name; o.textContent = p.name;
+        if (p.name === exp.paid_by) o.selected = true;
+        paidBySel.appendChild(o);
     });
-    if(ok) {
-        document.getElementById('expDesc').value = '';
-        document.getElementById('expAmount').value = '';
-        setDefaultDateTime();
-        await pullDatabaseState();
+
+    // Populate category
+    const catSel = document.getElementById("editExpCat");
+    catSel.innerHTML = "";
+    (globalCachedData?.categories || []).forEach(c => {
+        const o = document.createElement("option");
+        o.value = c.mainCat; o.textContent = c.mainCat;
+        if (c.mainCat === exp.main_cat) o.selected = true;
+        catSel.appendChild(o);
+    });
+    populateEditSubDropdown(exp.main_cat, exp.sub_cat);
+
+    // Populate split checkboxes
+    const splitGrid = document.getElementById("editSplitGrid");
+    splitGrid.innerHTML = "";
+    people.forEach(p => {
+        const lbl = document.createElement("label");
+        lbl.className = "checkbox-pill-item";
+        lbl.innerHTML = `<input type="checkbox" class="edit-split-cb" value="${escapeHtml(p.name)}" ${(exp.split_with || []).includes(p.name) ? "checked" : ""}><span>${escapeHtml(p.name)}</span>`;
+        splitGrid.appendChild(lbl);
+    });
+
+    modal.classList.add("active");
+}
+
+// ── App engine ────────────────────────────────────────────────────────────
+function initAppEngine() {
+    // Settings accordion
+    document.querySelectorAll("[data-accordion] > .accordion-head").forEach(head => {
+        head.addEventListener("click", () => {
+            head.closest("[data-accordion]")?.classList.toggle("open");
+        });
+    });
+
+    // Nav
+    document.querySelectorAll(".nav-item").forEach(btn => {
+        btn.addEventListener("click", function (e) {
+            e.preventDefault();
+            document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
+            document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+            this.classList.add("active");
+            const tid = this.getAttribute("data-target");
+            document.getElementById(tid)?.classList.add("active");
+            const labels = { "view-home":"Log","view-dashboard":"Trips","view-history":"Logs","view-analytics":"Metrics","view-settings":"Setup" };
+            const h = document.querySelector("header h1");
+            if (h) h.textContent = labels[tid] || "";
+            if (tid === "view-dashboard") renderTripDashboard();
+        });
+    });
+
+    // Trip selector
+    document.getElementById("globalTripSelector")?.addEventListener("change", function () {
+        _saveTripId(this.value);
+        pullDatabaseState();
+    });
+
+    // Category sub-dropdown chain
+    document.getElementById("expCategory")?.addEventListener("change", function () {
+        populateSubDropdown(this.value);
+    });
+    document.getElementById("deleteMainSelect")?.addEventListener("change", function () {
+        populateDeleteSubDropdown(this.value);
+    });
+    document.getElementById("editExpCat")?.addEventListener("change", function () {
+        populateEditSubDropdown(this.value, "");
+    });
+
+    // ── Add trip ───────────────────────────────────────────────────────────
+    document.getElementById("addTripBtn")?.addEventListener("click", async () => {
+        const nameInput = document.getElementById("newTripInput");
+        const currency  = document.getElementById("newTripCurrency")?.value || "INR";
+        const budgetEl  = document.getElementById("newTripBudget");
+        const name      = nameInput?.value.trim();
+        const budget    = budgetEl?.value ? parseFloat(budgetEl.value) : null;
+
+        if (!validName(name)) return showToast("Invalid trip name.", "error");
+        if (budget !== null && !validAmount(budget)) return showToast("Invalid budget amount.", "error");
+
+        const data = await apiFetch("/api/trips/add", { name, currency, budget });
+        if (data?.id) {
+            nameInput.value = ""; if (budgetEl) budgetEl.value = "";
+            _saveTripId(data.id);
+            await pullTripsList(true);
+            showToast(`Trip "${name}" created.`, "success");
+        }
+    });
+
+    // ── Edit trip (budget/currency) ────────────────────────────────────────
+    document.getElementById("saveTripSettingsBtn")?.addEventListener("click", async () => {
+        const trip = globalTripsList.find(t => t.id === currentTripId);
+        if (!trip) return;
+        const name     = document.getElementById("editTripName")?.value.trim() || trip.name;
+        const currency = document.getElementById("editTripCurrency")?.value || "INR";
+        const budgetEl = document.getElementById("editTripBudget");
+        const budget   = budgetEl?.value ? parseFloat(budgetEl.value) : null;
+
+        if (!validName(name)) return showToast("Invalid trip name.", "error");
+        const data = await apiFetch("/api/trips/update", { id: currentTripId, name, currency, budget });
+        if (data) { await pullTripsList(true); showToast("Trip settings saved.", "success"); }
+    });
+
+    // ── Add person ─────────────────────────────────────────────────────────
+    document.getElementById("addPersonBtn")?.addEventListener("click", async () => {
+        const input = document.getElementById("newPersonInput");
+        const name  = input?.value.trim();
+        if (!validName(name)) return showToast("Invalid name.", "error");
+        if (name.toLowerCase() === RESERVED) return showToast(`"${RESERVED}" is reserved.`, "error");
+        const data = await apiFetch("/api/people/add", { trip_id: currentTripId, name });
+        if (data) { input.value = ""; await pullPeopleList(); showToast(`${name} added.`, "success"); }
+    });
+
+    // ── Expense form ───────────────────────────────────────────────────────
+    document.getElementById("expenseForm")?.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const paidBy    = document.getElementById("expPaidBy")?.value;
+        const splitWith = Array.from(document.querySelectorAll(".expense-split-checkbox:checked")).map(cb => cb.value);
+        const timestamp = document.getElementById("expDateTime")?.value;
+        const desc      = document.getElementById("expDesc")?.value.trim();
+        const amount    = document.getElementById("expAmount")?.value;
+        const mainCat   = document.getElementById("expCategory")?.value;
+        const subCat    = document.getElementById("expSubCategory")?.value;
+
+        if (!validDesc(desc))    return showToast("Description required.", "error");
+        if (!validAmount(amount)) return showToast("Invalid amount.", "error");
+        if (!paidBy)             return showToast("Select a payer.", "error");
+        if (!mainCat || !subCat) return showToast("Select a category.", "error");
+
+        const data = await apiFetch("/api/expense/add", {
+            desc, amount, mainCat, subCat, timestamp, paidBy,
+            trip_id: currentTripId, splitWith: splitWith.length ? splitWith : [RESERVED]
+        });
+        if (data) {
+            document.getElementById("expDesc").value   = "";
+            document.getElementById("expAmount").value = "";
+            setDefaultDateTime();
+            await pullDatabaseState();
+            showToast("Expense logged.", "success");
+        }
+    });
+
+    // ── Edit expense form ──────────────────────────────────────────────────
+    document.getElementById("editExpenseForm")?.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const expId     = parseInt(document.getElementById("editExpId").value);
+        const desc      = document.getElementById("editExpDesc")?.value.trim();
+        const amount    = document.getElementById("editExpAmount")?.value;
+        const timestamp = document.getElementById("editExpDateTime")?.value;
+        const paidBy    = document.getElementById("editExpPaidBy")?.value;
+        const mainCat   = document.getElementById("editExpCat")?.value;
+        const subCat    = document.getElementById("editExpSubCat")?.value;
+        const splitWith = Array.from(document.querySelectorAll(".edit-split-cb:checked")).map(cb => cb.value);
+
+        if (!validDesc(desc))    return showToast("Description required.", "error");
+        if (!validAmount(amount)) return showToast("Invalid amount.", "error");
+        if (!paidBy)             return showToast("Select a payer.", "error");
+
+        const data = await apiFetch("/api/expense/edit", {
+            id: expId, desc, amount, mainCat, subCat, timestamp, paidBy,
+            splitWith: splitWith.length ? splitWith : [RESERVED]
+        });
+        if (data) {
+            document.getElementById("editExpenseModal")?.classList.remove("active");
+            await pullDatabaseState();
+            showToast("Expense updated.", "success");
+        }
+    });
+
+    document.getElementById("cancelEditExpBtn")?.addEventListener("click", () => {
+        document.getElementById("editExpenseModal")?.classList.remove("active");
+    });
+
+    document.getElementById("cancelEditExpBtn2")?.addEventListener("click", () => {
+        document.getElementById("editExpenseModal")?.classList.remove("active");
+    });
+
+    // ── Categories ─────────────────────────────────────────────────────────
+    document.getElementById("addMainBtn")?.addEventListener("click", async () => {
+        const input   = document.getElementById("newMainInput");
+        const mainCat = input?.value.trim();
+        if (!validName(mainCat)) return showToast("Invalid category name.", "error");
+        const data = await apiFetch("/api/category/add_main", { mainCat });
+        if (data) { input.value = ""; await pullDatabaseState(); showToast("Category added.", "success"); }
+    });
+
+    document.getElementById("addSubBtn")?.addEventListener("click", async () => {
+        const mainTarget = document.getElementById("targetMainSelect")?.value;
+        const input      = document.getElementById("newSubInput");
+        const subName    = input?.value.trim();
+        if (!mainTarget) return showToast("Select a main category.", "error");
+        if (!validName(subName)) return showToast("Invalid sub-category name.", "error");
+        const data = await apiFetch("/api/category/add_sub", { mainCat: mainTarget, subCat: subName });
+        if (data) { input.value = ""; await pullDatabaseState(); showToast("Sub-category added.", "success"); }
+    });
+
+    document.getElementById("deleteMainCatBtn")?.addEventListener("click", async () => {
+        const mainCat = document.getElementById("deleteMainSelect")?.value;
+        if (!mainCat) return showToast("Select a category to delete.", "error");
+        const ok = await showCustomConfirm("Delete Category", `Delete "${mainCat}" and all its sub-categories? Expenses using this category must be reassigned first.`);
+        if (!ok) return;
+        const data = await apiFetch("/api/category/delete_main", { mainCat });
+        if (data) { await pullDatabaseState(); showToast(`"${mainCat}" deleted.`, "success"); }
+    });
+
+    document.getElementById("deleteSubCatBtn")?.addEventListener("click", async () => {
+        const mainCat = document.getElementById("deleteMainSelect")?.value;
+        const subCat  = document.getElementById("deleteSubSelect")?.value;
+        if (!mainCat || !subCat) return showToast("Select a main and sub-category.", "error");
+        const ok = await showCustomConfirm("Delete Sub-Category", `Delete "${subCat}" from "${mainCat}"?`);
+        if (!ok) return;
+        const data = await apiFetch("/api/category/delete_sub", { mainCat, subCat });
+        if (data) { await pullDatabaseState(); showToast(`"${subCat}" deleted.`, "success"); }
+    });
+
+    // ── PDF ────────────────────────────────────────────────────────────────
+    document.getElementById("pdfBtn")?.addEventListener("click", () => {
+        try {
+            const now = new Date();
+            const sel = document.getElementById("globalTripSelector");
+            const tripName = sel?.options[sel.selectedIndex]?.text || "Trip";
+            const currency = globalCachedData?.currency || "₹";
+            
+            if (!globalCachedData?.expenses || globalCachedData.expenses.length === 0) {
+                showToast("No expenses to export. Add some expenses first.", "error");
+                return;
+            }
+            
+            const expenses = globalCachedData.expenses;
+            let grandTotal = 0, personTotals = {}, categoryTotals = {};
+            
+            // Proper calculation based on split_with and main_cat/sub_cat
+            expenses.forEach(exp => {
+                const amt = parseFloat(exp.amount) || 0;
+                grandTotal += amt;
+                
+                // Category: main_cat > sub_cat
+                const catKey = `${exp.main_cat} > ${exp.sub_cat}`;
+                categoryTotals[catKey] = (categoryTotals[catKey] || 0) + amt;
+                
+                // Person: divide amount among split_with people
+                const splits = exp.split_with || [];
+                if (splits.length > 0) {
+                    const share = amt / splits.length;
+                    splits.forEach(person => {
+                        personTotals[person] = (personTotals[person] || 0) + share;
+                    });
+                }
+            });
+            
+            const fmt = (n) => currency + parseFloat(n).toFixed(2);
+            
+            let htmlContent = `
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; color: #111827; padding: 20px; line-height: 1.6; }
+                        h1 { font-size: 24px; margin-bottom: 5px; }
+                        .date { font-size: 11px; color: #6b7280; margin-bottom: 20px; }
+                        .section { margin-bottom: 35px; }
+                        .section-title { font-size: 14px; font-weight: bold; text-transform: uppercase; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 15px; letter-spacing: 0.5px; }
+                        .total-box { font-size: 18px; color: #3b82f6; font-weight: bold; margin: 15px 0; }
+                        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                        th { background: #f3f4f6; padding: 10px; text-align: left; border-bottom: 2px solid #111827; font-weight: bold; }
+                        td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
+                        .amount { text-align: right; font-weight: 600; }
+                        .total-row { background: #f9fafb; font-weight: bold; border-top: 2px solid #111827; }
+                    </style>
+                </head>
+                <body>
+                    <h1>${tripName} - Trip Summary</h1>
+                    <p class="date">Generated: ${now.toLocaleDateString()} ${now.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</p>
+                    
+                    <div class="section">
+                        <div class="section-title">Total Spend</div>
+                        <div class="total-box">${fmt(grandTotal)}</div>
+                    </div>
+                    
+                    <div class="section">
+                        <div class="section-title">Spend Per Person</div>
+                        <table>
+                            <thead><tr><th>Person</th><th class="amount">Amount</th></tr></thead>
+                            <tbody>
+                                ${Object.entries(personTotals)
+                                    .sort((a, b) => b[1] - a[1])
+                                    .map(([name, total]) => `<tr><td>${name}</td><td class="amount">${fmt(total)}</td></tr>`)
+                                    .join("")}
+                                <tr class="total-row"><td>TOTAL</td><td class="amount">${fmt(grandTotal)}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="section">
+                        <div class="section-title">Category Wise Spend</div>
+                        <table>
+                            <thead><tr><th>Category</th><th class="amount">Amount</th><th class="amount">%</th></tr></thead>
+                            <tbody>
+                                ${Object.entries(categoryTotals)
+                                    .sort((a, b) => b[1] - a[1])
+                                    .map(([cat, total]) => `<tr><td>${cat}</td><td class="amount">${fmt(total)}</td><td class="amount">${((total/grandTotal)*100).toFixed(1)}%</td></tr>`)
+                                    .join("")}
+                                <tr class="total-row"><td>TOTAL</td><td class="amount">${fmt(grandTotal)}</td><td class="amount">100%</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="section">
+                        <div class="section-title">Expense Details</div>
+                        <table>
+                            <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid By</th><th>Split</th><th class="amount">Amount</th></tr></thead>
+                            <tbody>
+                                ${expenses.map(exp => {
+                                    const date = new Date(exp.timestamp).toLocaleDateString();
+                                    const cat = `${exp.main_cat} > ${exp.sub_cat}`;
+                                    const split = (exp.split_with || []).join(", ") || "-";
+                                    return `<tr><td>${date}</td><td>${exp.description}</td><td>${cat}</td><td>${exp.paid_by}</td><td>${split}</td><td class="amount">${fmt(exp.amount)}</td></tr>`;
+                                }).join("")}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                </body>
+                </html>
+            `;
+            
+            const element = document.createElement("div");
+            element.innerHTML = htmlContent;
+            const filename = `${tripName.replace(/\s+/g,"_")}_${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}-${String(now.getMinutes()).padStart(2,"0")}-${String(now.getSeconds()).padStart(2,"0")}.pdf`;
+            
+            html2pdf()
+                .set({ margin: 10, filename: filename, image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 2, useCORS: true, logging: false }, jsPDF: { unit: "mm", format: "a4", orientation: "portrait" } })
+                .from(element)
+                .save()
+                .then(() => {
+                    showToast("PDF exported successfully!", "success");
+                    console.log("PDF saved as:", filename);
+                })
+                .catch((err) => {
+                    console.error("PDF export error:", err);
+                    showToast("PDF export failed.", "error");
+                });
+                
+        } catch (err) {
+            console.error("PDF generation error:", err);
+            showToast("Error generating PDF.", "error");
+        }
+    });
+
+    document.getElementById("exportBtn")?.addEventListener("click", exportDataSnapshot);
+    document.getElementById("clearAllBtn")?.addEventListener("click", clearAllDatabaseLogs);
+
+    // Pre-fill edit trip settings when settings panel opens
+    document.querySelector('[data-target="view-settings"]')?.addEventListener("click", () => {
+        const trip = globalTripsList.find(t => t.id === currentTripId);
+        if (!trip) return;
+        const nameEl = document.getElementById("editTripName");
+        const curEl  = document.getElementById("editTripCurrency");
+        const budEl  = document.getElementById("editTripBudget");
+        if (nameEl) nameEl.value = trip.name;
+        if (curEl)  curEl.value  = trip.currency || "INR";
+        if (budEl)  budEl.value  = trip.budget || "";
+    });
+}
+
+// ── CRUD helpers ──────────────────────────────────────────────────────────
+async function deleteTripInstance(id) {
+    const ok = await showCustomConfirm("Delete Trip", "Permanently delete all logs for this trip?");
+    if (!ok) return;
+    const data = await apiFetch("/api/trips/delete", { id });
+    if (data) {
+        if (currentTripId === id) localStorage.removeItem(LS_TRIP_KEY);
+        await pullTripsList(true);
+        showToast("Trip deleted.", "success");
     }
-});
+}
 
-document.getElementById('addMainBtn').addEventListener('click', async function() {
-    const input = document.getElementById('newMainInput');
-    const mainCat = input.value.trim();
-    if (!mainCat) return;
-    const ok = await makeApiRequest('/api/category/add_main', { mainCat });
-    if(ok) { input.value = ''; await pullDatabaseState(); }
-});
+async function deletePersonInstance(id) {
+    const person = globalPeopleList.find(p => p.id === id);
+    const name   = person?.name;
+    const hasSpend = name && (globalCachedData?.expenses || []).some(exp =>
+        exp.paid_by === name || (Array.isArray(exp.split_with) && exp.split_with.includes(name))
+    );
+    if (hasSpend) {
+        return showToast(`${name} has expenses on this trip — remove those first, or leave ${name} as a member.`, "error");
+    }
+    const ok = await showCustomConfirm("Remove Member", "Soft-remove this person? Their historical expenses are preserved.");
+    if (!ok) return;
+    const data = await apiFetch("/api/people/delete", { id });
+    if (data) { await pullDatabaseState(); showToast("Member removed (historical data intact).", "success"); }
+}
 
-document.getElementById('addSubBtn').addEventListener('click', async function() {
-    const mainTarget = document.getElementById('targetMainSelect').value;
-    const input = document.getElementById('newSubInput');
-    const subName = input.value.trim();
-    if (!mainTarget || !subName) return;
-
-    const ok = await makeApiRequest('/api/category/add_sub', { mainCat: mainTarget, subCat: subName });
-    if(ok) { input.value = ''; await pullDatabaseState(); }
-});
+async function restorePersonInstance(name) {
+    const data = await apiFetch("/api/people/add", { trip_id: currentTripId, name });
+    if (data) { await pullPeopleList(); showToast(`${name} restored.`, "success"); }
+}
 
 async function deleteExpenseEntry(id) {
-    const ok = await makeApiRequest('/api/expense/delete', { id });
-    if(ok) await pullDatabaseState();
+    const ok = await showCustomConfirm("Delete Expense", "Remove this expense entry?");
+    if (!ok) return;
+    const data = await apiFetch("/api/expense/delete", { id });
+    if (data) { await pullDatabaseState(); showToast("Entry deleted.", "success"); }
 }
 
 async function clearAllDatabaseLogs() {
-    if (!confirm("Wipe all tracking logs inside this trip permanently?")) return;
-    const ok = await makeApiRequest('/api/clear', { trip_id: currentTripId });
-    if(ok) await pullDatabaseState();
+    const ok = await showCustomConfirm("Wipe Logs", "Delete ALL expense logs for this trip?");
+    if (!ok) return;
+    const data = await apiFetch("/api/clear", { trip_id: currentTripId });
+    if (data) { await pullDatabaseState(); showToast("Logs wiped.", "success"); }
 }
 
 function exportDataSnapshot() {
-    const blob = new Blob([JSON.stringify(globalCachedData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `trip_${currentTripId}_backup_snapshot.json`; a.click();
+    const sel      = document.getElementById("globalTripSelector");
+    const tripName = sel?.options[sel.selectedIndex]?.text || "trip";
+    const trip     = globalTripsList.find(t => t.id === currentTripId) || {};
+
+    // Canonical export envelope — everything needed for a future import
+    const payload = {
+        // ── Schema version: bump when the shape changes ──────────────────
+        _export_version: 1,
+        _exported_at: new Date().toISOString(),
+
+        // ── Trip metadata ────────────────────────────────────────────────
+        trip: {
+            id:         currentTripId,
+            name:       trip.name        || tripName,
+            currency:   trip.currency    || globalCachedData.currency || "INR",
+            budget:     trip.budget      ?? globalCachedData.budget ?? null,
+            created_at: trip.created_at  || null,
+            total_spend: trip.total_spend ?? null,
+        },
+
+        // ── Members (active + inactive for historical integrity) ─────────
+        people: globalPeopleList.map(p => ({
+            id:        p.id,
+            name:      p.name,
+            is_active: p.is_active ?? 1,
+        })),
+
+        // ── Categories with their sub-categories ────────────────────────
+        categories: (globalCachedData.categories || []).map(c => ({
+            mainCat: c.mainCat,
+            subs:    c.subs || [],
+        })),
+
+        // ── Every expense with full split detail ─────────────────────────
+        expenses: (globalCachedData.expenses || []).map(e => ({
+            id:          e.id,
+            description: e.description,
+            amount:      e.amount,
+            main_cat:    e.main_cat,
+            sub_cat:     e.sub_cat,
+            timestamp:   e.timestamp,
+            paid_by:     e.paid_by,
+            split_with:  Array.isArray(e.split_with) ? e.split_with : [],
+        })),
+    };
+
+    const date = new Date();
+    const ds   = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+    const filename = `${tripName.replace(/\s+/g,"_")}_${ds}.json`;
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("Snapshot exported.", "success");
 }
 
+// ── Confirm modal ─────────────────────────────────────────────────────────
+function showCustomConfirm(title, message) {
+    return new Promise(resolve => {
+        const modal  = document.getElementById("customModal");
+        const btnOk  = document.getElementById("customModalConfirmBtn");
+        const btnNo  = document.getElementById("customModalCancelBtn");
+        document.getElementById("customModalTitle").textContent   = title;
+        document.getElementById("customModalMessage").textContent = message;
+        modal.classList.add("active");
+        function done(val) {
+            btnOk.removeEventListener("click", onOk);
+            btnNo.removeEventListener("click", onNo);
+            modal.classList.remove("active");
+            resolve(val);
+        }
+        const onOk = () => done(true);
+        const onNo = () => done(false);
+        btnOk.addEventListener("click", onOk);
+        btnNo.addEventListener("click", onNo);
+    });
+}
+
+// ── Custom select drawer ──────────────────────────────────────────────────
+function setupCustomDropdownInterceptors() {
+    ["#globalTripSelector","#expPaidBy","#expCategory","#expSubCategory","#targetMainSelect","#deleteMainSelect","#deleteSubSelect"].forEach(sel => {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        el.removeEventListener("mousedown", _onDropdown);
+        el.addEventListener("mousedown", _onDropdown);
+    });
+}
+
+function _onDropdown(e) { e.preventDefault(); this.blur(); _openDrawer(this); }
+
+function _openDrawer(sel) {
+    const overlay   = document.getElementById("customSelectModal");
+    const container = document.getElementById("customSelectOptionsContainer");
+    const labelEl   = document.getElementById("customSelectTitle");
+    const closeBtn  = document.getElementById("customSelectClose");
+    if (!overlay || !container) return;
+
+    const fieldLabel = sel.closest(".form-group")?.querySelector("label")?.textContent || "Select";
+    if (labelEl) labelEl.textContent = fieldLabel;
+    container.innerHTML = "";
+
+    Array.from(sel.options).forEach(opt => {
+        const item = document.createElement("div");
+        item.className = `drawer-option-item${opt.value === sel.value ? " selected" : ""}`;
+        item.textContent = opt.text;
+        item.addEventListener("click", () => {
+            sel.value = opt.value;
+            sel.dispatchEvent(new Event("change"));
+            close();
+        });
+        container.appendChild(item);
+    });
+
+    overlay.classList.add("active");
+    function close() {
+        overlay.classList.remove("active");
+        closeBtn?.removeEventListener("click", close);
+        overlay.removeEventListener("click", outside);
+    }
+    function outside(e) { if (e.target === overlay) close(); }
+    closeBtn?.addEventListener("click", close);
+    overlay.addEventListener("click", outside);
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────
 function escapeHtml(str) {
-    if (str === null || str === undefined) return "";
-    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    if (str == null) return "";
+    return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
 
-// --- CRITICAL ATTACHMENT: ACTIVE BACKGROUND REGISTRATION LINKER FOR PWAs ---
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('ServiceWorker engine compiled successfully within path scope:', reg.scope))
-            .catch(err => console.error('ServiceWorker execution failed to align layout states:', err));
+if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js")
+            .then(r => console.log("SW:", r.scope))
+            .catch(e => console.warn("SW failed:", e));
     });
 }
