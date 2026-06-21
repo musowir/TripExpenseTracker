@@ -1,18 +1,33 @@
 {
   "name": "Trip Settle",
   "short_name": "Settle",
+  "description": "Track shared trip expenses and settle debts fairly",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#090d16",
   "theme_color": "#131926",
-  "orientation": "portrait",
+  "orientation": "portrait-primary",
   "icons": [
     {
       "src": "/icon.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["productivity", "finance"],
+  "screenshots": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
     }
   ]
 }
-
