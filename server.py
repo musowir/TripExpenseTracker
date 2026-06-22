@@ -191,6 +191,47 @@ def init_db():
             conn.execute("ALTER TABLE trip_people ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
         except sqlite3.OperationalError:
             pass
+        
+        # Create pre-allocations and settlements table (v2 migration)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pre_allocations_settlements (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                trip_id     INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                person_name TEXT NOT NULL CHECK(length(person_name) <= 80),
+                amount      REAL NOT NULL CHECK(amount > 0 AND amount <= 10000000),
+                type        TEXT NOT NULL CHECK(type IN ('pre_allocation', 'settle_up')),
+                timestamp   TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                notes       TEXT DEFAULT NULL CHECK(length(notes) <= 255),
+                from_person TEXT DEFAULT NULL CHECK(from_person IS NULL OR length(from_person) <= 80),
+                to_person   TEXT DEFAULT NULL CHECK(to_person IS NULL OR length(to_person) <= 80)
+            )
+        """)
+
+        # v3 migration: add from_person / to_person columns if upgrading from older schema
+        for col, defn in [
+            ("from_person", "TEXT DEFAULT NULL CHECK(from_person IS NULL OR length(from_person) <= 80)"),
+            ("to_person",   "TEXT DEFAULT NULL CHECK(to_person IS NULL OR length(to_person) <= 80)"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE pre_allocations_settlements ADD COLUMN {col} {defn}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
+        # Back-fill legacy rows: person_name was the "from" side for both types
+        conn.execute("""
+            UPDATE pre_allocations_settlements
+               SET from_person = person_name
+             WHERE from_person IS NULL
+        """)
+
+        try:
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pas_trip_id 
+                ON pre_allocations_settlements(trip_id)
+            """)
+        except sqlite3.OperationalError:
+            pass
 
         conn.commit()
     log.info("Database ready: %s", DB_FILE)
@@ -412,10 +453,21 @@ def get_data():
         ).fetchone()
         currency = trip_row["currency"] if trip_row else "INR"
         budget   = trip_row["budget"]   if trip_row else None
+        
+        # Fetch pre-allocations and settlements
+        prealloc_rows = db.execute(
+            "SELECT id, person_name, amount, type, timestamp, notes, from_person, to_person "
+            "FROM pre_allocations_settlements WHERE trip_id=? ORDER BY timestamp DESC",
+            (trip_id,)
+        ).fetchall()
     else:
         rows     = db.execute(
             "SELECT id, description, amount, main_cat, sub_cat, timestamp, paid_by "
             "FROM expenses ORDER BY timestamp DESC"
+        ).fetchall()
+        prealloc_rows = db.execute(
+            "SELECT id, person_name, amount, type, timestamp, notes, from_person, to_person "
+            "FROM pre_allocations_settlements ORDER BY timestamp DESC"
         ).fetchall()
         currency = "INR"
         budget   = None
@@ -432,6 +484,21 @@ def get_data():
             "split_with": [s["person_name"] for s in splits],
         })
 
+    # Format pre-allocations and settlements
+    prealloc_settlements = [
+        {
+            "id":          r["id"],
+            "person_name": r["person_name"],
+            "from_person": r["from_person"] or r["person_name"],  # fall back to person_name for legacy rows
+            "to_person":   r["to_person"],
+            "amount":      r["amount"],
+            "type":        r["type"],
+            "timestamp":   r["timestamp"],
+            "notes":       r["notes"],
+        }
+        for r in prealloc_rows
+    ]
+
     cat_rows   = db.execute("SELECT main_cat, subs_csv FROM categories ORDER BY main_cat").fetchall()
     categories = [
         {"mainCat": r["main_cat"], "subs": [s for s in r["subs_csv"].split(",") if s]}
@@ -441,6 +508,7 @@ def get_data():
     return jsonify({
         "expenses": expenses, "categories": categories,
         "currency": currency, "budget": budget,
+        "preAllocationSettlements": prealloc_settlements,
     })
 
 @app.route("/api/expense/add", methods=["POST"])
@@ -536,6 +604,98 @@ def delete_expense():
         return jsonify({"error": "Invalid id."}), 400
     db = get_db()
     db.execute("DELETE FROM expenses WHERE id=?", (int(exp_id),))
+    db.commit()
+    return jsonify({"success": True})
+
+# ── Pre-allocation & Settlement routes ────────────────────────────────────────
+@app.route("/api/pre-allocation-settlement/add", methods=["POST"])
+@rate_limited
+def add_pre_alloc_settlement():
+    data        = request.get_json(silent=True) or {}
+    trip_id     = data.get("trip_id")
+    entry_type  = str(data.get("type", "")).strip()
+    amount      = data.get("amount")
+    timestamp   = str(data.get("timestamp", "")).strip()
+    notes       = str(data.get("notes", "")).strip() if data.get("notes") else None
+
+    # Support both old-style (personName) and new-style (from_person / to_person)
+    from_person = str(data.get("from_person", data.get("personName", ""))).strip()
+    to_person   = str(data.get("to_person",   "")).strip() or None
+
+    # Validation
+    if not valid_id(trip_id):
+        return jsonify({"error": "Invalid trip_id."}), 400
+    if entry_type not in ("pre_allocation", "settle_up"):
+        return jsonify({"error": "Type must be 'pre_allocation' or 'settle_up'."}), 400
+    if not valid_amount(amount):
+        return jsonify({"error": "Invalid amount."}), 400
+    if not valid_timestamp(timestamp):
+        return jsonify({"error": "Invalid timestamp."}), 400
+    if notes and len(notes) > MAX_DESC_LEN:
+        return jsonify({"error": "Notes too long."}), 400
+    if not from_person or not valid_name(from_person):
+        return jsonify({"error": "Invalid from_person."}), 400
+
+    # to_person is optional for pre_allocation but required for settle_up
+    if entry_type == "settle_up":
+        if not to_person or not valid_name(to_person):
+            return jsonify({"error": "Invalid to_person for settlement."}), 400
+        if from_person == to_person:
+            return jsonify({"error": "from_person and to_person must differ."}), 400
+
+    # person_name = the primary person involved (from_person for both types)
+    person_name = from_person
+
+    db = get_db()
+
+    # Verify trip exists
+    trip_row = db.execute("SELECT id FROM trips WHERE id=?", (int(trip_id),)).fetchone()
+    if not trip_row:
+        return jsonify({"error": "Trip not found."}), 404
+
+    # For settle_up: verify both participants exist in the trip.
+    # "System" is a virtual person — skip DB check for it.
+    VIRTUAL = {"System"}
+
+    people_to_check = [from_person]
+    if to_person and to_person not in VIRTUAL:
+        people_to_check.append(to_person)
+
+    for name in people_to_check:
+        if name in VIRTUAL:
+            continue
+        person = db.execute(
+            "SELECT id FROM trip_people WHERE trip_id=? AND name=?",
+            (int(trip_id), name)
+        ).fetchone()
+        if not person:
+            return jsonify({"error": f"Person '{name}' not found in this trip."}), 404
+
+    try:
+        db.execute(
+            """INSERT INTO pre_allocations_settlements
+               (trip_id, person_name, amount, type, timestamp, notes, from_person, to_person)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (int(trip_id), person_name, float(amount), entry_type,
+             timestamp, notes, from_person, to_person)
+        )
+        db.commit()
+        return jsonify({"success": True})
+    except sqlite3.IntegrityError as e:
+        log.warning("add_pre_alloc_settlement error: %s", e)
+        return jsonify({"error": "Database error."}), 409
+
+@app.route("/api/pre-allocation-settlement/delete", methods=["POST"])
+@rate_limited
+def delete_pre_alloc_settlement():
+    data = request.get_json(silent=True) or {}
+    entry_id = data.get("id")
+    
+    if not valid_id(entry_id):
+        return jsonify({"error": "Invalid id."}), 400
+    
+    db = get_db()
+    db.execute("DELETE FROM pre_allocations_settlements WHERE id=?", (int(entry_id),))
     db.commit()
     return jsonify({"success": True})
 

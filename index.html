@@ -100,13 +100,95 @@
                 </form>
             </div>
         </div>
-
-        <!-- ── TRIP DASHBOARD ───────────────────────────────────────────── -->
-        <div class="view-panel" id="view-dashboard">
+        
+        <!-- ── GROUP & SETTLEMENT ────────────────────────────────────────── -->
+        <div class="view-panel" id="view-group">
+    
+          <!-- Settlement Metrics -->
+          <div class="card" id="groupBreakdownCard">
+              <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:4px">Group Settlement Metrics</h3>
+              <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Who owes whom after settlement optimisation.</div>
+              <div id="groupDebtsList" style="font-size:13px;display:flex;flex-direction:column;gap:6px"></div>
+          </div>
             <div class="card">
-                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:12px">All Trips</h3>
-                <div id="tripDashboardGrid" class="trip-dash-grid"></div>
+    <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:14px">Fund Advances & Settlements</h3>
+    
+    <!-- Tab selector -->
+    <div class="form-group" style="display:flex;gap:8px;margin-bottom:16px;border-bottom:1px solid var(--border-line);padding-bottom:8px">
+    <button type="button" class="settlement-tab-btn active" data-type="pre_allocation" onclick="switchSettlementTab('pre_allocation')">Fund Advance</button>
+    <button type="button" class="settlement-tab-btn" data-type="settle_up" onclick="switchSettlementTab('settle_up')">Settlement</button>
+    </div>
+
+    <!-- FUND ADVANCE FORM -->
+    <form id="preAllocSettleForm-fund" class="settlement-form-content" style="display:block">
+        <div style="background:rgba(245,158,11,0.05);border-left:3px solid var(--warning-color);padding:12px;border-radius:4px;font-size:12px;color:var(--text-secondary);margin-bottom:14px">
+            Fund advances are recorded as [Person]  →  <span style="background:rgba(245,158,11,0.1);color:var(--warning-color);padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">SYSTEM</span>
+        </div>
+
+        <div class="form-group"><label>Date & Time</label><input type="datetime-local" id="pasFundDateTime" required></div>
+        
+        <div class="form-group"><label>Person Advancing Fund</label><select id="pasFundFrom" required></select></div>
+        
+        <!-- Visual preview: Person → System -->
+        <div id="pasFundPreview" class="transfer-flow" style="display:none;justify-content:center;align-items:center;gap:12px;padding:12px;background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.2);border-radius:8px;margin-bottom:14px">
+            <div style="text-align:center">
+                <div style="font-size:10px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">From</div>
+                <div style="font-size:13px;font-weight:600" id="pasFundFromPreview">—</div>
             </div>
+            <div style="color:var(--accent-glow);font-size:18px">→</div>
+            <div style="text-align:center">
+                <div style="font-size:10px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">To</div>
+                <div style="font-size:13px;font-weight:600"><span style="background:rgba(245,158,11,0.1);color:var(--warning-color);padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">System</span></div>
+            </div>
+        </div>
+
+        <div class="form-group"><label>Amount</label><input type="number" id="pasFundAmount" placeholder="0.00" step="0.01" min="0.01" required></div>
+        
+        <div class="form-group"><label>Notes (Optional)</label><input type="text" id="pasFundNotes" placeholder="e.g., Hotel booking deposit..." maxlength="255"></div>
+        
+        <button type="submit" class="btn-primary">Record Fund Advance</button>
+    </form>
+
+    <!-- SETTLEMENT FORM -->
+    <form id="preAllocSettleForm-settlement" class="settlement-form-content" style="display:none">
+        <div style="background:rgba(96,165,250,0.05);border-left:3px solid var(--accent-glow);padding:12px;border-radius:4px;font-size:12px;color:var(--text-secondary);margin-bottom:14px">
+            Settlements record explicit transfers between group members
+        </div>
+
+        <div class="form-group"><label>Date & Time</label><input type="datetime-local" id="pasSettleDateTime" required></div>
+        
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>From (Payer)</label><select id="pasSettleFrom" required></select></div>
+            <div class="form-group"><label>To (Receiver)</label><select id="pasSettleTo" required></select></div>
+        </div>
+
+        <!-- Visual preview: Person → Person -->
+        <div id="pasSettlePreview" class="transfer-flow" style="display:none;justify-content:center;align-items:center;gap:12px;padding:12px;background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.2);border-radius:8px;margin-bottom:14px">
+<div style="text-align:center">
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">From</div>
+    <div style="font-size:13px;font-weight:600" id="pasSettleFromPreview">—</div>
+</div>
+<div style="color:var(--accent-glow);font-size:18px">→</div>
+<div style="text-align:center">
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">To</div>
+    <div style="font-size:13px;font-weight:600" id="pasSettleToPreview">—</div>
+</div>
+        </div>
+
+        <div class="form-group"><label>Amount</label><input type="number" id="pasSettleAmount" placeholder="0.00" step="0.01" min="0.01" required></div>
+        
+        <div class="form-group"><label>Notes (Optional)</label><input type="text" id="pasSettleNotes" placeholder="e.g., Reimbursement for taxi..." maxlength="255"></div>
+        
+        <button type="submit" class="btn-primary">Record Settlement</button>
+    </form>
+</div>
+
+          <!-- Pre-allocations & Settlements Log -->
+          <div class="card" id="preAllocSettleCard" style="display:none">
+              <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:4px">Fund Tracking Log</h3>
+              <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">All advances and settlements recorded.</div>
+              <div id="preAllocSettleList" style="display:flex;flex-direction:column;gap:4px"></div>
+          </div>
         </div>
 
         <!-- ── HISTORY ──────────────────────────────────────────────────── -->
@@ -119,11 +201,6 @@
 
         <!-- ── ANALYTICS ────────────────────────────────────────────────── -->
         <div class="view-panel" id="view-analytics">
-            <div class="card" id="groupBreakdownCard">
-                <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:4px">Group Balance</h3>
-                <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Who owes whom after settlement optimisation.</div>
-                <div id="groupDebtsList" style="font-size:13px;display:flex;flex-direction:column;gap:6px"></div>
-            </div>
             <!-- Daily analytics -->
             <div class="card" id="dailyAnalyticsCard" style="display:none">
                 <h3 style="margin-top:0;font-size:14px;font-weight:600;margin-bottom:4px">Daily Spend</h3>
@@ -193,7 +270,8 @@
                 </button>
                 <div class="accordion-body">
                     <div class="section-lbl" style="margin-top:0">Existing trips</div>
-                    <div id="settingsTripManagementList" class="list-management-box"></div>
+                    <!-- <div id="settingsTripManagementList" class="list-management-box"></div> -->
+                    <div id="tripDashboardGrid" class="trip-dash-grid"></div>
 
                     <div class="section-lbl">Start a new trip</div>
                     <div class="form-group"><label>Trip Name</label><input type="text" id="newTripInput" placeholder="e.g., Goa 2026" maxlength="80"></div>
@@ -308,7 +386,7 @@
     <!-- Bottom nav -->
     <nav class="bottom-nav">
         <button class="nav-item active" data-target="view-home"><span class="ui-icon icon-log"></span><span>Log</span></button>
-        <button class="nav-item" data-target="view-dashboard"><span class="ui-icon icon-analytics"><span></span><span></span><span></span></span><span>Trips</span></button>
+        <button class="nav-item" data-target="view-group"><span class="ui-icon icon-users"></span><span>Group</span></button>
         <button class="nav-item" data-target="view-history"><span class="ui-icon icon-history"></span><span>History</span></button>
         <button class="nav-item" data-target="view-analytics"><span class="ui-icon icon-analytics"><span></span><span></span><span></span></span><span>Analytics</span></button>
         <button class="nav-item" data-target="view-settings"><span class="ui-icon icon-setup"></span><span>Setup</span></button>

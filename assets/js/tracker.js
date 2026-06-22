@@ -1,31 +1,49 @@
 "use strict";
 
 // ── Constants & state ─────────────────────────────────────────────────────
-const LS_TRIP_KEY    = "exptracker_activeTripId_v1";
-const MAX_NAME       = 80;
-const MAX_DESC       = 255;
-const MAX_AMOUNT     = 10_000_000;
-const RESERVED       = "me";
+const LS_TRIP_KEY = "exptracker_activeTripId_v1";
+const MAX_NAME = 80;
+const MAX_DESC = 255;
+const MAX_AMOUNT = 10_000_000;
+const RESERVED = "me";
 
 const CURRENCY_SYMBOLS = {
-    INR:"₹", USD:"$", EUR:"€", AED:"د.إ", GBP:"£",
-    SGD:"S$", AUD:"A$", JPY:"¥", CAD:"C$", THB:"฿"
+    INR: "₹",
+    USD: "$",
+    EUR: "€",
+    AED: "د.إ",
+    GBP: "£",
+    SGD: "S$",
+    AUD: "A$",
+    JPY: "¥",
+    CAD: "C$",
+    THB: "฿"
 };
 
-let globalCachedData  = { expenses: [], categories: [], currency: "INR", budget: null };
-let globalTripsList   = [];
-let globalPeopleList  = [];
-let currentTripId     = _safeLoadTripId();
-let currentCurrency   = "INR";
-let currentBudget     = null;
+const SYSTEM_PERSON = "System"; // Reserved person for handling remainders
+
+let globalCachedData = {
+    expenses: [],
+    categories: [],
+    currency: "INR",
+    budget: null,
+    preAllocationSettlements: []
+};
+let globalTripsList = [];
+let globalPeopleList = [];
+let currentTripId = _safeLoadTripId();
+let currentCurrency = "INR";
+let currentBudget = null;
 
 function _safeLoadTripId() {
     const n = parseInt(localStorage.getItem(LS_TRIP_KEY), 10);
-    return (Number.isFinite(n) && n > 0) ? n : 1;
+    return (Number.isFinite(n) && n > 0) ? n: 1;
 }
 function _saveTripId(id) {
     const n = parseInt(id, 10);
-    if (Number.isFinite(n) && n > 0) { currentTripId = n; localStorage.setItem(LS_TRIP_KEY, String(n)); }
+    if (Number.isFinite(n) && n > 0) {
+        currentTripId = n; localStorage.setItem(LS_TRIP_KEY, String(n));
+    }
 }
 
 // ── Currency helper ───────────────────────────────────────────────────────
@@ -35,7 +53,7 @@ function fmt(amount) {
 }
 
 // ── Toast + sync badge ────────────────────────────────────────────────────
-let _toastTimer   = null;
+let _toastTimer = null;
 let _badgeRestore = null;
 
 function showToast(msg, type = "info") {
@@ -46,20 +64,30 @@ function showToast(msg, type = "info") {
         t.style.cssText = "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:8px;font-size:13px;font-weight:500;z-index:9999;max-width:320px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.45);transition:opacity .3s;pointer-events:none";
         document.body.appendChild(t);
     }
-    const palettes = { info:["#1e293b","#f1f5f9"], error:["#7f1d1d","#fca5a5"], success:["#064e3b","#6ee7b7"], warn:["#78350f","#fde68a"] };
-    const [bg, fg] = palettes[type] || palettes.info;
+    const palettes = {
+        info: ["#1e293b",
+            "#f1f5f9"],
+        error: ["#7f1d1d",
+            "#fca5a5"],
+        success: ["#064e3b",
+            "#6ee7b7"],
+        warn: ["#78350f",
+            "#fde68a"]
+    };
+    const [bg,
+        fg] = palettes[type] || palettes.info;
     t.style.cssText += `;background:${bg};color:${fg}`;
     t.textContent = msg;
     t.style.opacity = "1";
 
     // Temporarily mirror in the sync badge
     const badge = document.getElementById("syncBadge");
-    const text  = document.getElementById("syncStatusText");
+    const text = document.getElementById("syncStatusText");
     if (badge && text) {
         const prevClass = badge.className;
-        const prevText  = text.textContent;
-        badge.className = "sync-status-pill " + (type === "error" ? "error" : type === "success" ? "synced" : "syncing");
-        text.textContent = msg.length > 22 ? msg.slice(0, 22) + "…" : msg;
+        const prevText = text.textContent;
+        badge.className = "sync-status-pill " + (type === "error" ? "error": type === "success" ? "synced": "syncing");
+        text.textContent = msg.length > 22 ? msg.slice(0, 22) + "…": msg;
         clearTimeout(_badgeRestore);
         _badgeRestore = setTimeout(() => {
             badge.className = prevClass;
@@ -68,14 +96,16 @@ function showToast(msg, type = "info") {
     }
 
     clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(() => { t.style.opacity = "0"; }, 3500);
+    _toastTimer = setTimeout(() => {
+        t.style.opacity = "0";
+    }, 3500);
 }
 
 function updateSyncBadge(status, message) {
     const badge = document.getElementById("syncBadge");
-    const text  = document.getElementById("syncStatusText");
+    const text = document.getElementById("syncStatusText");
     if (!badge || !text) return;
-    badge.className  = "sync-status-pill " + status;
+    badge.className = "sync-status-pill " + status;
     text.textContent = message;
 }
 
@@ -83,11 +113,20 @@ function updateSyncBadge(status, message) {
 async function apiFetch(url, payload = null) {
     try {
         const opts = payload
-            ? { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) }
-            : { method:"GET" };
-        const res  = await fetch(url, opts);
+        ? {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        }: {
+            method: "GET"
+        };
+        const res = await fetch(url, opts);
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) { showToast(data?.error || `Server error (${res.status})`, "error"); return null; }
+        if (!res.ok) {
+            showToast(data?.error || `Server error (${res.status})`, "error"); return null;
+        }
         updateSyncBadge("synced", "SQLite Connected");
         return data;
     } catch {
@@ -99,9 +138,15 @@ async function apiFetch(url, payload = null) {
 
 // ── Validation ────────────────────────────────────────────────────────────
 const _SAFE = /^[\w\s\-'\.,&\(\)/]{1,80}$/;
-function validName(v)   { return !!(v && typeof v === "string" && _SAFE.test(v.trim())); }
-function validAmount(v) { const n = parseFloat(v); return Number.isFinite(n) && n > 0 && n <= MAX_AMOUNT; }
-function validDesc(v)   { const s = String(v ?? "").trim(); return s.length > 0 && s.length <= MAX_DESC; }
+function validName(v) {
+    return !!(v && typeof v === "string" && _SAFE.test(v.trim()));
+}
+function validAmount(v) {
+    const n = parseFloat(v); return Number.isFinite(n) && n > 0 && n <= MAX_AMOUNT;
+}
+function validDesc(v) {
+    const s = String(v ?? "").trim(); return s.length > 0 && s.length <= MAX_DESC;
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
@@ -125,18 +170,25 @@ function setDefaultDateTime() {
     if (el) el.value = now.toISOString().slice(0, 16);
 }
 
+// ── Load data helper ──────────────────────────────────────────────────────────
+async function loadData() {
+    await pullDatabaseState();
+}
+
 // ── Data pull ─────────────────────────────────────────────────────────────
 async function pullDatabaseState() {
     const loader = document.getElementById("loader");
     try {
         const data = await apiFetch(`/api/data?trip_id=${currentTripId}`);
         if (!data) {
-            if (loader) { loader.textContent = "DB connection failed — is the server running?"; loader.style.display = "block"; }
+            if (loader) {
+                loader.textContent = "DB connection failed — is the server running?"; loader.style.display = "block";
+            }
             return;
         }
         globalCachedData = data;
-        currentCurrency  = data.currency || "INR";
-        currentBudget    = data.budget   || null;
+        currentCurrency = data.currency || "INR";
+        currentBudget = data.budget || null;
         await pullPeopleList();
         renderUI();
         renderBudgetBar();
@@ -149,7 +201,7 @@ async function pullDatabaseState() {
 async function pullTripsList(shouldLoad = false) {
     const data = await apiFetch("/api/trips");
     if (!data) return;
-    globalTripsList = Array.isArray(data) ? data : [];
+    globalTripsList = Array.isArray(data) ? data: [];
     if (globalTripsList.length > 0 && !globalTripsList.some(t => t.id === currentTripId)) {
         _saveTripId(globalTripsList[0].id);
     }
@@ -167,35 +219,46 @@ async function pullTripsList(shouldLoad = false) {
 async function pullPeopleList() {
     const data = await apiFetch(`/api/people?trip_id=${currentTripId}`);
     if (!data) return;
-    globalPeopleList = Array.isArray(data) ? data : [];
+    globalPeopleList = Array.isArray(data) ? data: [];
     if (!globalPeopleList.some(p => p.name === RESERVED)) {
-        globalPeopleList.unshift({ id: 0, name: RESERVED, is_active: 1 });
+        globalPeopleList.unshift({
+            id: 0, name: RESERVED, is_active: 1
+        });
+    }
+    // Ensure System person exists for handling remainders
+    if (!globalPeopleList.some(p => p.name === SYSTEM_PERSON)) {
+        globalPeopleList.push({
+            id: -1, name: SYSTEM_PERSON, is_active: 1
+        });
     }
     renderPeopleSelectors();
 }
 
 // ── Render UI ─────────────────────────────────────────────────────────────
 function renderUI() {
-    const expCatSel     = document.getElementById("expCategory");
+    const expCatSel = document.getElementById("expCategory");
     const targetMainSel = document.getElementById("targetMainSelect");
-    const deleteCatSel  = document.getElementById("deleteMainSelect");
+    const deleteCatSel = document.getElementById("deleteMainSelect");
     if (!expCatSel || !targetMainSel) return;
 
     const prev = expCatSel.value;
-    [expCatSel, targetMainSel].forEach(s => s.innerHTML = "");
+    [expCatSel,
+        targetMainSel].forEach(s => s.innerHTML = "");
     if (deleteCatSel) deleteCatSel.innerHTML = "";
 
     (globalCachedData?.categories || [])
-        .sort((a, b) => (a.mainCat || "").localeCompare(b.mainCat || ""))
-        .forEach(item => {
-            if (!item.mainCat) return;
-            [expCatSel, targetMainSel, deleteCatSel].forEach(sel => {
+    .sort((a, b) => (a.mainCat || "").localeCompare(b.mainCat || ""))
+    .forEach(item => {
+        if (!item.mainCat) return;
+        [expCatSel,
+            targetMainSel,
+            deleteCatSel].forEach(sel => {
                 if (!sel) return;
                 const o = document.createElement("option");
                 o.value = item.mainCat; o.textContent = item.mainCat;
                 sel.appendChild(o);
             });
-        });
+    });
 
     if (prev && Array.from(expCatSel.options).some(o => o.value === prev)) expCatSel.value = prev;
     if (expCatSel.value) populateSubDropdown(expCatSel.value);
@@ -210,59 +273,63 @@ function renderUI() {
 function renderBudgetBar() {
     const card = document.getElementById("budgetCard");
     if (!card) return;
-    if (!currentBudget) { card.style.display = "none"; return; }
+    if (!currentBudget) {
+        card.style.display = "none"; return;
+    }
     card.style.display = "block";
 
-    const total   = (globalCachedData?.expenses || []).reduce((s, e) => s + parseFloat(e.amount || 0), 0);
-    const pct     = Math.min((total / currentBudget) * 100, 100).toFixed(1);
-    const over    = total > currentBudget;
-    const remain  = currentBudget - total;
+    const total = (globalCachedData?.expenses || []).reduce((s, e) => s + parseFloat(e.amount || 0), 0);
+    const pct = Math.min((total / currentBudget) * 100, 100).toFixed(1);
+    const over = total > currentBudget;
+    const remain = currentBudget - total;
 
-    document.getElementById("budgetTotal").textContent   = fmt(currentBudget);
-    document.getElementById("budgetSpent").textContent   = fmt(total);
-    document.getElementById("budgetRemain").textContent  = over ? `Over by ${fmt(Math.abs(remain))}` : fmt(remain);
-    document.getElementById("budgetPct").textContent     = `${pct}%`;
+    document.getElementById("budgetTotal").textContent = fmt(currentBudget);
+    document.getElementById("budgetSpent").textContent = fmt(total);
+    document.getElementById("budgetRemain").textContent = over ? `Over by ${fmt(Math.abs(remain))}`: fmt(remain);
+    document.getElementById("budgetPct").textContent = `${pct}%`;
     const bar = document.getElementById("budgetBarFill");
     if (bar) {
-        bar.style.width      = `${pct}%`;
-        bar.style.background = over ? "var(--danger-muted)" : pct > 80 ? "#f59e0b" : "var(--accent-glow)";
+        bar.style.width = `${pct}%`;
+        bar.style.background = over ? "var(--danger-muted)": pct > 80 ? "#f59e0b": "var(--accent-glow)";
     }
     const alert = document.getElementById("budgetAlert");
     if (alert) {
-        alert.style.display  = over ? "block" : "none";
+        alert.style.display = over ? "block": "none";
         if (over) alert.textContent = `⚠ Budget exceeded by ${fmt(Math.abs(remain))}`;
     }
 }
 
 async function renderDailyAnalytics() {
     const container = document.getElementById("dailyAnalyticsList");
-    const card      = document.getElementById("dailyAnalyticsCard");
+    const card = document.getElementById("dailyAnalyticsCard");
     if (!container || !card) return;
 
     const data = await apiFetch(`/api/analytics/daily?trip_id=${currentTripId}`);
-    if (!data || !data.days?.length) { card.style.display = "none"; return; }
+    if (!data || !data.days?.length) {
+        card.style.display = "none"; return;
+    }
     card.style.display = "block";
     container.innerHTML = "";
 
     const maxDay = Math.max(...data.days.map(d => d.total));
 
-    document.getElementById("dailyAvg").textContent     = fmt(data.average_daily);
+    document.getElementById("dailyAvg").textContent = fmt(data.average_daily);
     document.getElementById("dailyHighDay").textContent = data.highest_day?.day || "—";
     document.getElementById("dailyHighAmt").textContent = fmt(data.highest_day?.total);
 
     data.days.forEach(d => {
-        const pct  = maxDay > 0 ? ((d.total / maxDay) * 100).toFixed(0) : 0;
+        const pct = maxDay > 0 ? ((d.total / maxDay) * 100).toFixed(0): 0;
         const isHigh = d.day === data.highest_day?.day;
-        const row  = document.createElement("div");
+        const row = document.createElement("div");
         row.style.cssText = "margin-bottom:8px";
         row.innerHTML = `
-            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);margin-bottom:3px">
-                <span style="color:${isHigh ? "var(--accent-glow)" : "var(--text-pure)"};font-weight:${isHigh ? "600":"400"}">${d.day}</span>
-                <span style="color:var(--text-pure);font-weight:500">${fmt(d.total)} <span style="color:var(--text-dim)">(${d.count} entries)</span></span>
-            </div>
-            <div style="background:var(--bg-deep);border-radius:4px;height:6px;overflow:hidden">
-                <div style="height:100%;width:${pct}%;background:${isHigh ? "var(--accent-glow)" : "var(--border-line)"};border-radius:4px;transition:width .4s"></div>
-            </div>`;
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);margin-bottom:3px">
+        <span style="color:${isHigh ? "var(--accent-glow)": "var(--text-pure)"};font-weight:${isHigh ? "600": "400"}">${d.day}</span>
+        <span style="color:var(--text-pure);font-weight:500">${fmt(d.total)} <span style="color:var(--text-dim)">(${d.count} entries)</span></span>
+        </div>
+        <div style="background:var(--bg-deep);border-radius:4px;height:6px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${isHigh ? "var(--accent-glow)": "var(--border-line)"};border-radius:4px;transition:width .4s"></div>
+        </div>`;
         container.appendChild(row);
     });
 }
@@ -274,27 +341,38 @@ function renderTripDashboard() {
 
     globalTripsList.forEach(trip => {
         const isActive = trip.id === currentTripId;
-        const sym      = CURRENCY_SYMBOLS[trip.currency] || trip.currency;
-        const spend    = parseFloat(trip.total_spend || 0);
-        const budPct   = trip.budget ? Math.min((spend / trip.budget) * 100, 100).toFixed(0) : null;
+        const sym = CURRENCY_SYMBOLS[trip.currency] || trip.currency;
+        const spend = parseFloat(trip.total_spend || 0);
+        const budPct = trip.budget ? Math.min((spend / trip.budget) * 100, 100).toFixed(0): null;
+
+        if (trip.id === currentTripId) {
+            const nameEl = document.getElementById("editTripName");
+            const curEl = document.getElementById("editTripCurrency");
+            const budEl = document.getElementById("editTripBudget");
+            if (nameEl) nameEl.value = trip.name || "";
+            if (curEl) curEl.value = trip.currency || "INR";
+            if (budEl) budEl.value = trip.budget || "";
+        }
 
         const card = document.createElement("div");
-        card.className = "trip-dash-card" + (isActive ? " active" : "");
+        card.className = "trip-dash-card" + (isActive ? " active": "");
+        card.style.position = "relative";
         card.innerHTML = `
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-                <div>
-                    <div style="font-weight:600;font-size:13px;color:var(--text-pure)">${escapeHtml(trip.name)}</div>
-                    <div style="font-size:10px;color:var(--text-dim);margin-top:2px">${trip.currency} · ${trip.created_at?.slice(0,10) || ""}</div>
-                </div>
-                ${isActive ? `<span style="font-size:10px;padding:2px 7px;background:var(--accent-glow);color:#000;border-radius:10px;font-weight:700">Active</span>` : ""}
-            </div>
-            <div style="font-size:20px;font-weight:700;color:var(--accent-glow);margin-bottom:4px">${sym}${spend.toFixed(2)}</div>
-            ${trip.budget ? `
-                <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">Budget: ${sym}${parseFloat(trip.budget).toFixed(2)}</div>
-                <div style="background:var(--bg-deep);border-radius:3px;height:4px;overflow:hidden">
-                    <div style="height:100%;width:${budPct}%;background:${budPct >= 100 ? "var(--danger-muted)" : "var(--accent-glow)"};border-radius:3px"></div>
-                </div>` : `<div style="font-size:10px;color:var(--text-dim)">No budget set</div>`}
-            ${!isActive ? `<div style="margin-top:8px"><span style="font-size:11px;color:var(--accent-glow);cursor:pointer" data-switch="${trip.id}">Switch →</span></div>` : ""}
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+        <div>
+        <div style="font-weight:600;font-size:13px;color:var(--text-pure)">${escapeHtml(trip.name)}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:2px">${trip.currency} · ${trip.created_at?.slice(0, 10) || ""}</div>
+        </div>
+        ${isActive ? `<span style="font-size:10px;padding:2px 7px;background:var(--accent-glow);color:#000;border-radius:10px;font-weight:700">Active</span>`: ""}
+        </div>
+        <div style="font-size:20px;font-weight:700;color:var(--accent-glow);margin-bottom:4px">${sym}${spend.toFixed(2)}</div>
+        ${trip.budget ? `
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">Budget: ${sym}${parseFloat(trip.budget).toFixed(2)}</div>
+        <div style="background:var(--bg-deep);border-radius:3px;height:4px;overflow:hidden">
+        <div style="height:100%;width:${budPct}%;background:${budPct >= 100 ? "var(--danger-muted)": "var(--accent-glow)"};border-radius:3px"></div>
+        </div>`: `<div style="font-size:10px;color:var(--text-dim)">No budget set</div>`}
+        ${!isActive ? `<div style="margin-top:8px"><span style="font-size:11px;color:var(--accent-glow);cursor:pointer" data-switch="${trip.id}">Switch →</span></div>`: ""}
+        <span style="position:absolute;bottom:14px;right:14px;color:var(--danger-muted);font-size:11px;cursor:pointer;font-weight:500;opacity:0.7;hover:opacity:1" class="trip-del-btn" data-id="${trip.id}">Delete</span>
         `;
         grid.appendChild(card);
     });
@@ -303,14 +381,20 @@ function renderTripDashboard() {
         el.addEventListener("click", function () {
             _saveTripId(this.dataset.switch);
             document.getElementById("globalTripSelector").value = currentTripId;
-            pullDatabaseState().then(() => { pullTripsList(); });
+            pullDatabaseState().then(() => {
+                pullTripsList();
+            });
         });
     });
+    grid.querySelectorAll(".trip-del-btn").forEach(el => {
+        el.addEventListener("click", () => deleteTripInstance(parseInt(el.dataset.id)));
+    });
+
 }
 
 function renderTripSelectors() {
-    const headerSel   = document.getElementById("globalTripSelector");
-    const settingsList = document.getElementById("settingsTripManagementList");
+    const headerSel = document.getElementById("globalTripSelector");
+    const settingsList = document.getElementById("tripDashboardGrid");
     if (!headerSel || !settingsList) return;
 
     headerSel.innerHTML = "";
@@ -326,11 +410,11 @@ function renderTripSelectors() {
         row.className = "list-item-row";
         const isActive = trip.id === currentTripId;
         row.innerHTML = `
-            <span style="font-size:13px;font-weight:${isActive?"700":"400"};color:${isActive?"var(--accent-glow)":"var(--text-pure)"}">
-                ${escapeHtml(trip.name)} ${isActive ? "(Active)" : ""}
-                <span style="font-size:10px;color:var(--text-dim);margin-left:4px">${trip.currency}</span>
-            </span>
-            ${globalTripsList.length > 1 ? `<span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-trip-btn" data-id="${trip.id}">Delete</span>` : ""}
+        <span style="font-size:13px;font-weight:${isActive?"700": "400"};color:${isActive?"var(--accent-glow)": "var(--text-pure)"}">
+        ${escapeHtml(trip.name)} ${isActive ? "(Active)": ""}
+        <span style="font-size:10px;color:var(--text-dim);margin-left:4px">${trip.currency}</span>
+        </span>
+        ${globalTripsList.length > 1 ? `<span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-trip-btn" data-id="${trip.id}">Delete</span>`: ""}
         `;
         settingsList.appendChild(row);
     });
@@ -341,31 +425,72 @@ function renderTripSelectors() {
 }
 
 function renderPeopleSelectors() {
-    const paidByDrop  = document.getElementById("expPaidBy");
-    const splitGrid   = document.getElementById("splitConsumersContainer");
-    const settingsList = document.getElementById("settingsPeopleManagementList");
+    const paidByDrop       = document.getElementById("expPaidBy");
+    const splitGrid        = document.getElementById("splitConsumersContainer");
+    const settingsList     = document.getElementById("settingsPeopleManagementList");
+    const settlePersonDrop = document.getElementById("pasPersonName");
+    const fundToDrop       = document.getElementById("pasFundFrom");
+    const settleFromDrop   = document.getElementById("pasSettleFrom");
+    const settleToDrop     = document.getElementById("pasSettleTo");
+
+    // Only guard the essentials; settlement dropdowns may not exist on all views
     if (!paidByDrop || !splitGrid || !settingsList) return;
 
-    paidByDrop.innerHTML = "";
-    splitGrid.innerHTML  = "";
+    paidByDrop.innerHTML   = "";
+    splitGrid.innerHTML    = "";
     settingsList.innerHTML = "";
+    if (settlePersonDrop) settlePersonDrop.innerHTML = "";
+    if (fundToDrop)       fundToDrop.innerHTML       = "";
+    if (settleFromDrop)   settleFromDrop.innerHTML   = "";
+    if (settleToDrop)     settleToDrop.innerHTML     = "";
 
-    const active   = globalPeopleList.filter(p => p?.name === RESERVED || p?.is_active);
-    const inactive = globalPeopleList.filter(p => p?.name !== RESERVED && !p?.is_active);
-    const ordered  = [
+    const active  = globalPeopleList.filter(p => (p?.name === RESERVED || p?.is_active) && p?.name !== SYSTEM_PERSON);
+    const inactive = globalPeopleList.filter(p => p?.name !== RESERVED && p?.name !== SYSTEM_PERSON && !p?.is_active);
+    const ordered = [
         { id:0, name:RESERVED, is_active:1 },
         ...active.filter(p => p.name !== RESERVED).sort((a,b) => a.name.localeCompare(b.name))
     ];
 
     ordered.forEach(person => {
-        const opt = document.createElement("option");
-        opt.value = person.name; opt.textContent = person.name;
-        paidByDrop.appendChild(opt);
+        // ── paidByDrop — own element ──────────────────────────────────────
+        const paidOpt = document.createElement("option");
+        paidOpt.value = person.name; paidOpt.textContent = person.name;
+        paidByDrop.appendChild(paidOpt);
 
+        // ── settlePersonDrop — own element ────────────────────────────────
+        if (settlePersonDrop) {
+            const spo = document.createElement("option");
+            spo.value = person.name; spo.textContent = person.name;
+            settlePersonDrop.appendChild(spo);
+        }
+
+        // ── fundToDrop ────────────────────────────────────────────────────
+        if (fundToDrop) {
+            const fo = document.createElement("option");
+            fo.value = person.name; fo.textContent = person.name;
+            fundToDrop.appendChild(fo);
+        }
+
+        // ── settleFromDrop ────────────────────────────────────────────────
+        if (settleFromDrop) {
+            const sfo = document.createElement("option");
+            sfo.value = person.name; sfo.textContent = person.name;
+            settleFromDrop.appendChild(sfo);
+        }
+
+        // ── settleToDrop ──────────────────────────────────────────────────
+        if (settleToDrop) {
+            const sto = document.createElement("option");
+            sto.value = person.name; sto.textContent = person.name;
+            settleToDrop.appendChild(sto);
+        }
+
+        // ── split checkboxes ──────────────────────────────────────────────
         const lbl = document.createElement("label");
         lbl.className = "checkbox-pill-item";
         lbl.innerHTML = `<input type="checkbox" class="expense-split-checkbox" value="${escapeHtml(person.name)}" checked><span>${escapeHtml(person.name)}</span>`;
         splitGrid.appendChild(lbl);
+
 
         const hasSpend = (globalCachedData?.expenses || []).some(exp =>
             exp.paid_by === person.name || (Array.isArray(exp.split_with) && exp.split_with.includes(person.name))
@@ -382,10 +507,10 @@ function renderPeopleSelectors() {
             actionHtml = `<span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="rm-person-btn" data-id="${person.id}">Remove</span>`;
         }
         row.innerHTML = `
-            <span style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-pure)">
-                <span class="ui-icon icon-person" style="width:14px;height:14px"></span>${escapeHtml(person.name)}
-            </span>
-            ${actionHtml}
+        <span style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-pure)">
+        <span class="ui-icon icon-person" style="width:14px;height:14px"></span>${escapeHtml(person.name)}
+        </span>
+        ${actionHtml}
         `;
         settingsList.appendChild(row);
     });
@@ -399,24 +524,39 @@ function renderPeopleSelectors() {
         inactive.forEach(person => {
             const row = document.createElement("div");
             row.className = "list-item-row";
-            row.style.opacity = "0.45";
             row.innerHTML = `
-                <span style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-dim)">
-                    <span class="ui-icon icon-person" style="width:14px;height:14px"></span>${escapeHtml(person.name)}
-                    <span style="font-size:10px">(inactive)</span>
-                </span>
-                <span style="color:var(--accent-glow);font-size:11px;cursor:pointer" class="restore-person-btn" data-name="${escapeHtml(person.name)}">Restore</span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-dim)">
+            <span class="ui-icon icon-person" style="width:14px;height:14px"></span>${escapeHtml(person.name)}
+            </span>
             `;
             settingsList.appendChild(row);
         });
     }
 
-    settingsList.querySelectorAll(".rm-person-btn").forEach(el =>
-        el.addEventListener("click", () => deletePersonInstance(parseInt(el.dataset.id)))
-    );
-    settingsList.querySelectorAll(".restore-person-btn").forEach(el =>
-        el.addEventListener("click", () => restorePersonInstance(el.dataset.name))
-    );
+    // Setup custom dropdown interceptors AFTER populating options
+    setupCustomDropdownInterceptors();
+
+    // Sync form previews now that dropdowns have values
+    _refreshSettlementPreviews();
+
+    // Add remove person button handlers
+    document.querySelectorAll(".rm-person-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const id = parseInt(btn.dataset.id, 10);
+            const person = globalPeopleList.find(p => p.id === id);
+            if (!person || person.name === RESERVED) return;
+            const ok = await showCustomConfirm("Remove Person", `Remove '${escapeHtml(person.name)}' from this trip?`);
+            if (ok) {
+                const result = await apiFetch("/api/people/delete", {
+                    id, trip_id: currentTripId
+                });
+                if (result?.success) {
+                    showToast("Person removed.", "success");
+                    loadData();
+                }
+            }
+        });
+    });
 }
 
 function populateSubDropdown(mainCatName) {
@@ -460,90 +600,107 @@ function populateEditSubDropdown(mainCatName, currentVal) {
 }
 
 function renderLogsAndAnalytics() {
-    const historyList      = document.getElementById("historyList");
-    const analyticsList    = document.getElementById("analyticsList");
-    const totalText        = document.getElementById("totalSpend");
-    const debtsList        = document.getElementById("groupDebtsList");
-    const personSummList   = document.getElementById("personTotalsSummaryList");
-    const personSummCard   = document.getElementById("personTotalsSummaryCard");
-    const printBody        = document.getElementById("printTableLogBody");
-    const printAnalytics   = document.getElementById("printAnalyticsSummary");
+    const historyList = document.getElementById("historyList");
+    const analyticsList = document.getElementById("analyticsList");
+    const totalText = document.getElementById("totalSpend");
+    const debtsList = document.getElementById("groupDebtsList");
+    const personSummList = document.getElementById("personTotalsSummaryList");
+    const personSummCard = document.getElementById("personTotalsSummaryCard");
+    const printBody = document.getElementById("printTableLogBody");
+    const printAnalytics = document.getElementById("printAnalyticsSummary");
     const printPersonTotals = document.getElementById("printPersonTotalsSummary");
-    const printGrandTotal  = document.getElementById("printGrandTotal");
+    const printGrandTotal = document.getElementById("printGrandTotal");
 
     if (!historyList || !analyticsList || !totalText) return;
-    [historyList, analyticsList].forEach(el => el.innerHTML = "");
-    if (debtsList)    debtsList.innerHTML    = "";
+    [historyList,
+        analyticsList].forEach(el => el.innerHTML = "");
+    if (debtsList) debtsList.innerHTML = "";
     if (personSummList) personSummList.innerHTML = "";
-    if (printBody)    printBody.innerHTML    = "";
+    if (printBody) printBody.innerHTML = "";
     if (printAnalytics) printAnalytics.innerHTML = "";
     if (printPersonTotals) printPersonTotals.innerHTML = "";
 
-    let grandTotal       = 0;
-    let reportStructure  = {};
-    let balanceSheet     = {};
-    let personTotals     = {};
+    let grandTotal = 0;
+    let reportStructure = {};
+    let balanceSheet = {};
+    let personTotals = {};
 
     globalPeopleList.forEach(p => {
-        if (p?.name) { balanceSheet[p.name] = 0; personTotals[p.name] = 0; }
+        if (p?.name) {
+            balanceSheet[p.name] = 0; personTotals[p.name] = 0;
+        }
     });
     (globalCachedData?.categories || []).forEach(item => {
         if (!item.mainCat) return;
-        reportStructure[item.mainCat] = { total:0, subs:{}, personShares:{} };
-        globalPeopleList.forEach(p => { if (p?.name) reportStructure[item.mainCat].personShares[p.name] = 0; });
-        (item.subs || []).forEach(s => { reportStructure[item.mainCat].subs[s] = 0; });
+        reportStructure[item.mainCat] = {
+            total: 0,
+            subs: {},
+            personShares: {}
+        };
+        globalPeopleList.forEach(p => {
+            if (p?.name) reportStructure[item.mainCat].personShares[p.name] = 0;
+        });
+        (item.subs || []).forEach(s => {
+            reportStructure[item.mainCat].subs[s] = 0;
+        });
     });
 
     (globalCachedData?.expenses || []).forEach(exp => {
-        const amt       = parseFloat(exp.amount || 0);
-        const payer     = exp.paid_by || "?";
-        let consumers   = Array.isArray(exp.split_with) && exp.split_with.length ? exp.split_with : [RESERVED];
-        const share     = amt / consumers.length;
-        grandTotal     += amt;
+        const amt = parseFloat(exp.amount || 0);
+        const payer = exp.paid_by || "?";
+        let consumers = Array.isArray(exp.split_with) && exp.split_with.length ? exp.split_with: [RESERVED];
+        const share = amt / consumers.length;
+        grandTotal += amt;
 
         if (!(payer in balanceSheet)) balanceSheet[payer] = 0;
         balanceSheet[payer] += amt;
         consumers.forEach(c => {
-            if (!(c in balanceSheet))  balanceSheet[c]  = 0;
-            if (!(c in personTotals))  personTotals[c]  = 0;
+            if (!(c in balanceSheet)) balanceSheet[c] = 0;
+            if (!(c in personTotals)) personTotals[c] = 0;
             balanceSheet[c] -= share;
             personTotals[c] += share;
         });
 
         const main = exp.main_cat || "Unassigned";
-        const sub  = exp.sub_cat  || "Unassigned";
-        if (!reportStructure[main]) reportStructure[main] = { total:0, subs:{}, personShares:{} };
+        const sub = exp.sub_cat || "Unassigned";
+        if (!reportStructure[main]) reportStructure[main] = {
+            total: 0,
+            subs: {},
+            personShares: {}
+        };
         reportStructure[main].total += amt;
         reportStructure[main].subs[sub] = (reportStructure[main].subs[sub] || 0) + amt;
         consumers.forEach(c => {
             reportStructure[main].personShares[c] = (reportStructure[main].personShares[c] || 0) + share;
         });
 
-        const dateObj  = new Date(exp.timestamp);
-        const dispTime = isNaN(dateObj) ? "N/A" : `${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`;
-        const badges   = consumers.map(c => `<span style="font-size:10px;padding:2px 5px;background:var(--bg-deep);border:1px solid var(--border-line);border-radius:4px;margin-right:2px">${escapeHtml(c)}</span>`).join("");
+        const dateObj = new Date(exp.timestamp);
+        const dispTime = isNaN(dateObj) ? "N/A": `${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([], {
+            hour: "2-digit", minute: "2-digit"
+        })}`;
+        const badges = consumers.map(c => `<span style="font-size:10px;padding:2px 5px;background:var(--bg-deep);border:1px solid var(--border-line);border-radius:4px;margin-right:2px">${escapeHtml(c)}</span>`).join("");
 
         const card = document.createElement("div");
         card.className = "log-item";
         card.innerHTML = `
-            <div style="flex:1;min-width:0">
-                <div style="font-weight:500;font-size:14px">${escapeHtml(exp.description)}</div>
-                <div class="log-meta" style="margin-bottom:6px">
-                    <span>Paid by <b>${escapeHtml(payer)}</b></span> &middot;
-                    <span>${dispTime}</span> &middot;
-                    <span class="tag-pill">${escapeHtml(main)} · ${escapeHtml(sub)}</span>
-                </div>
-                <div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:4px">
-                    <span style="font-size:10px;color:var(--text-dim);align-self:center;margin-right:4px">Split:</span>${badges}
-                </div>
-            </div>
-            <div style="text-align:right;flex-shrink:0;margin-left:8px">
-                <div style="font-weight:600;color:var(--text-pure);font-size:14px;margin-bottom:4px">${fmt(amt)}</div>
-                <div style="display:flex;gap:8px;justify-content:flex-end">
-                    <span style="color:var(--accent-glow);font-size:11px;cursor:pointer" class="edit-exp-btn" data-id="${exp.id}">Edit</span>
-                    <span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-exp-btn" data-id="${exp.id}">Delete</span>
-                </div>
-            </div>`;
+        <div style="flex:1;min-width:0">
+        <div style="font-weight:500;font-size:14px">${escapeHtml(exp.description)}</div>
+        <div class="log-meta" style="margin-bottom:6px">
+        <span>Paid by <b>${escapeHtml(payer)}</b></span> &middot;
+        <span>${dispTime}</span> &middot;
+        <span class="tag-pill">${escapeHtml(main)} · ${escapeHtml(sub)}</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:4px">
+        <span style="font-size:10px;color:var(--text-dim);align-self:center;margin-right:4px">Split:</span>${badges}
+        </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:8px">
+        <div style="font-weight:600;color:var(--text-pure);font-size:14px;margin-bottom:4px">${fmt(amt)}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+        <span style="color:var(--accent-glow);font-size:11px;cursor:pointer" class="edit-exp-btn" data-id="${exp.id}">Edit</span>
+        <span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-exp-btn" data-id="${exp.id}">Delete</span>
+        </div>
+        </div>`;
         historyList.appendChild(card);
 
         if (printBody) {
@@ -552,6 +709,59 @@ function renderLogsAndAnalytics() {
             printBody.appendChild(tr);
         }
     });
+
+    // Build a separate fund ledger: how much each person pre-funded into the system pool
+    // net[person] = totalPrefunded - theirShareOfExpenses
+    // Positive net  → system owes them
+    // Negative net  → they owe the system
+    const prefunded = {};   // amount each person put INTO the system pool
+    const settled   = {};   // person-to-person settlements (settle_up type)
+
+    (globalCachedData?.preAllocationSettlements || []).forEach(entry => {
+        const person = entry.from_person;
+        const amount = parseFloat(entry.amount || 0);
+
+        if (entry.type === "pre_allocation") {
+            // Person pre-funded the shared pool
+            if (!(person in prefunded)) prefunded[person] = 0;
+            prefunded[person] += amount;
+        } else if (entry.type === "settle_up") {
+            // Direct person-to-person settlement (not pool-based)
+            const to = entry.to_person;
+            if (!(person in settled)) settled[person] = 0;
+            if (!(to    in settled)) settled[to]    = 0;
+            settled[person] += amount; 
+            settled[to]     -= amount;
+        }
+    });
+
+    // Reset balanceSheet to a clean net calculation:
+    // Start from expense-based balances (already computed above),
+    // then layer in prefunding and settlements.
+    //
+    // After the expense loop above:
+    //   balanceSheet[payer]    += amt   (positive = funded more than consumed)
+    //   balanceSheet[consumer] -= share (negative = consumed but hasn't paid)
+    //
+    // Pre-funding means the person gave money to the group pool,
+    // so add it to their balance (they are owed more back).
+    Object.entries(prefunded).forEach(([person, amount]) => {
+        if (!(person in balanceSheet)) balanceSheet[person] = 0;
+        balanceSheet[person] += amount;
+    });
+
+    // Apply person-to-person settlements
+    Object.entries(settled).forEach(([person, delta]) => {
+        if (!(person in balanceSheet)) balanceSheet[person] = 0;
+        balanceSheet[person] += delta;
+    });
+
+    // Any net surplus across all people flows through the System account.
+    // System balance = -(sum of all other balances), ensuring the ledger zeroes out.
+    const peopleNetSum = Object.entries(balanceSheet)
+        .filter(([name]) => name !== SYSTEM_PERSON)
+        .reduce((sum, [, bal]) => sum + bal, 0);
+    balanceSheet[SYSTEM_PERSON] = -peopleNetSum;
 
     historyList.querySelectorAll(".del-exp-btn").forEach(el =>
         el.addEventListener("click", () => deleteExpenseEntry(parseInt(el.dataset.id)))
@@ -566,31 +776,74 @@ function renderLogsAndAnalytics() {
     // Debt settlement
     if (debtsList) {
         const groupCard = document.getElementById("groupBreakdownCard");
-        let debtors = [], creditors = [];
+        let debtors = [],
+        creditors = [];
+
+        // Separate System person from normal people
+        const systemBalance = balanceSheet[SYSTEM_PERSON] || 0;
+
         Object.entries(balanceSheet).forEach(([name, bal]) => {
-            if (bal < -0.01)  debtors.push({ name, balance: Math.abs(bal) });
+            if (name === SYSTEM_PERSON) return; // handled separately below
+            if (bal < -0.01) debtors.push({ name, balance: Math.abs(bal) });
             else if (bal > 0.01) creditors.push({ name, balance: bal });
         });
+
+        // Person-to-person debt settlement (excluding System)
+        const dCopy = debtors.map(x => ({ ...x }));
+        const cCopy = creditors.map(x => ({ ...x }));
         let d = 0, c = 0;
-        while (d < debtors.length && c < creditors.length) {
-            const settle = Math.min(debtors[d].balance, creditors[c].balance);
-            debtors[d].balance -= settle; creditors[c].balance -= settle;
+        while (d < dCopy.length && c < cCopy.length) {
+            const settle = Math.min(dCopy[d].balance, cCopy[c].balance);
+            dCopy[d].balance -= settle;
+            cCopy[c].balance -= settle;
             const row = document.createElement("div");
             row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-line)";
-            row.innerHTML = `<span><span class="ui-icon icon-arrow-right" style="color:var(--danger-muted);width:14px;height:14px"></span> <b>${escapeHtml(debtors[d].name)}</b> owes <b>${escapeHtml(creditors[c].name)}</b></span><span style="color:var(--danger-muted);font-weight:600">${fmt(settle)}</span>`;
+            row.innerHTML = `<span><span class="ui-icon icon-arrow-right" style="color:var(--danger-muted);width:14px;height:14px"></span> <b>${escapeHtml(dCopy[d].name)}</b> owes <b>${escapeHtml(cCopy[c].name)}</b></span><span style="color:var(--danger-muted);font-weight:600">${fmt(settle)}</span>`;
             debtsList.appendChild(row);
-            if (debtors[d].balance   <= 0.01) d++;
-            if (creditors[c].balance <= 0.01) c++;
+            if (dCopy[d].balance <= 0.01) d++;
+            if (cCopy[c].balance <= 0.01) c++;
         }
+
+        // System settlement rows
+        // systemBalance < 0 → system owes people (they over-funded)
+        // systemBalance > 0 → people owe system (they under-funded)
+        if (Math.abs(systemBalance) > 0.01) {
+            let remaining = systemBalance;
+            if (systemBalance < -0.01) {
+                // System owes back to people who have positive balance (over-funded)
+                creditors.forEach(creditor => {
+                    const settle = Math.min(Math.abs(remaining), creditor.balance);
+                    if (settle < 0.01) return;
+                    remaining += settle;
+                    const row = document.createElement("div");
+                    row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-line)";
+                    row.innerHTML = `<span><span class="ui-icon icon-arrow-right" style="color:var(--accent-glow);width:14px;height:14px"></span> <b>${escapeHtml(SYSTEM_PERSON)}</b> owes <b>${escapeHtml(creditor.name)}</b></span><span style="color:var(--accent-glow);font-weight:600">${fmt(settle)}</span>`;
+                    debtsList.appendChild(row);
+                });
+            } else {
+                // People owe the system (under-funded relative to their spend)
+                debtors.forEach(debtor => {
+                    const settle = Math.min(remaining, debtor.balance);
+                    if (settle < 0.01) return;
+                    remaining -= settle;
+                    const row = document.createElement("div");
+                    row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-line)";
+                    row.innerHTML = `<span><span class="ui-icon icon-arrow-right" style="color:var(--danger-muted);width:14px;height:14px"></span> <b>${escapeHtml(debtor.name)}</b> owes <b>${escapeHtml(SYSTEM_PERSON)}</b></span><span style="color:var(--danger-muted);font-weight:600">${fmt(settle)}</span>`;
+                    debtsList.appendChild(row);
+                });
+            }
+        }
+
         if (!debtsList.children.length) debtsList.innerHTML = `<p style="color:var(--success-glow);text-align:center;font-size:12px;margin:4px 0">🎉 All squared up!</p>`;
-        if (groupCard) groupCard.style.display = globalPeopleList.length > 0 ? "block" : "none";
+        if (groupCard) groupCard.style.display = globalPeopleList.filter(p => p.name !== SYSTEM_PERSON).length > 0 ? "block": "none";
     }
 
     // Analytics
     Object.entries(reportStructure).forEach(([main, data]) => {
         if (data.total <= 0) return;
-        const pct  = grandTotal > 0 ? ((data.total / grandTotal) * 100).toFixed(0) : 0;
-        let subHtml = "", shareHtml = "";
+        const pct = grandTotal > 0 ? ((data.total / grandTotal) * 100).toFixed(0): 0;
+        let subHtml = "",
+        shareHtml = "";
         Object.entries(data.subs).forEach(([s, a]) => {
             if (a <= 0) return;
             const sp = ((a / data.total) * 100).toFixed(0);
@@ -603,13 +856,13 @@ function renderLogsAndAnalytics() {
         const div = document.createElement("div");
         div.className = "chart-row";
         div.innerHTML = `
-            <div class="chart-labels">
-                <span style="color:var(--text-pure);font-size:12px">${escapeHtml(main)} <span style="color:var(--text-dim);font-size:10px">${pct}%</span></span>
-                <strong style="font-weight:500">${fmt(data.total)}</strong>
-            </div>
-            <div class="chart-bar-bg"><div class="chart-bar-fill" style="width:${pct}%"></div></div>
-            <div class="sub-metrics-list">${subHtml}</div>
-            <div class="person-spend-badge-container">${shareHtml || `<span class="person-spend-badge" style="border:none;padding:0">No individual shares</span>`}</div>`;
+        <div class="chart-labels">
+        <span style="color:var(--text-pure);font-size:12px">${escapeHtml(main)} <span style="color:var(--text-dim);font-size:10px">${pct}%</span></span>
+        <strong style="font-weight:500">${fmt(data.total)}</strong>
+        </div>
+        <div class="chart-bar-bg"><div class="chart-bar-fill" style="width:${pct}%"></div></div>
+        <div class="sub-metrics-list">${subHtml}</div>
+        <div class="person-spend-badge-container">${shareHtml || `<span class="person-spend-badge" style="border:none;padding:0">No individual shares</span>`}</div>`;
         analyticsList.appendChild(div);
 
         // Also populate print analytics
@@ -623,11 +876,11 @@ function renderLogsAndAnalytics() {
                 printSubHtml += `<div class="print-sub-row"><span>↳ ${escapeHtml(s)} (${sp}%)</span><span>${fmt(a)}</span></div>`;
             });
             printDiv.innerHTML = `
-                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                    <strong>${escapeHtml(main)} (${pct}%)</strong>
-                    <strong>${fmt(data.total)}</strong>
-                </div>
-                ${printSubHtml}`;
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <strong>${escapeHtml(main)} (${pct}%)</strong>
+            <strong>${fmt(data.total)}</strong>
+            </div>
+            ${printSubHtml}`;
             printAnalytics.appendChild(printDiv);
         }
     });
@@ -635,8 +888,8 @@ function renderLogsAndAnalytics() {
     // Person totals
     if (personSummList && personSummCard) {
         const sorted = Object.keys(personTotals).filter(n => personTotals[n] > 0)
-            .sort((a,b) => personTotals[b] - personTotals[a]);
-        personSummCard.style.display = sorted.length ? "block" : "none";
+        .sort((a, b) => personTotals[b] - personTotals[a]);
+        personSummCard.style.display = sorted.length ? "block": "none";
         sorted.forEach(name => {
             const row = document.createElement("div");
             row.className = "summary-total-row";
@@ -648,15 +901,15 @@ function renderLogsAndAnalytics() {
     // Print person totals
     if (printPersonTotals) {
         const sorted = Object.keys(personTotals).filter(n => personTotals[n] > 0)
-            .sort((a,b) => personTotals[b] - personTotals[a]);
+        .sort((a, b) => personTotals[b] - personTotals[a]);
         sorted.forEach(name => {
             const row = document.createElement("div");
             row.className = "print-chart-row";
             row.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e5e7eb">
-                    <span><strong>${escapeHtml(name)}</strong></span>
-                    <span style="font-weight:600">${fmt(personTotals[name])}</span>
-                </div>`;
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e5e7eb">
+            <span><strong>${escapeHtml(name)}</strong></span>
+            <span style="font-weight:600">${fmt(personTotals[name])}</span>
+            </div>`;
             printPersonTotals.appendChild(row);
         });
         if (!sorted.length) {
@@ -665,11 +918,305 @@ function renderLogsAndAnalytics() {
     }
 
     if (!globalCachedData?.expenses?.length) {
-        historyList.innerHTML  = `<p style="color:var(--text-dim);text-align:center;font-size:12px;padding:20px 0">No logs yet.</p>`;
+        historyList.innerHTML = `<p style="color:var(--text-dim);text-align:center;font-size:12px;padding:20px 0">No logs yet.</p>`;
         analyticsList.innerHTML = `<p style="color:var(--text-dim);text-align:center;font-size:12px;padding:16px 0">No metrics yet.</p>`;
         if (personSummCard) personSummCard.style.display = "none";
     }
+
+    // Render pre-allocation and settlement log
+    renderPreAllocSettlementLog();
 }
+
+// ── Render pre-allocation & settlement log ──────────────────────────────────
+function renderPreAllocSettlementLog() {
+    const container = document.getElementById("preAllocSettleList");
+    const card = document.getElementById("preAllocSettleCard");
+    if (!container || !card) return;
+
+    const entries = globalCachedData?.preAllocationSettlements || [];
+    container.innerHTML = "";
+    card.style.display = entries.length ? "block": "none";
+
+    if (!entries.length) return;
+
+    // Group by type for better organization
+    const advances = entries.filter(e => e.type === "pre_allocation");
+    const settlements = entries.filter(e => e.type === "settle_up");
+
+    // Render Fund Advances
+    if (advances.length) {
+        const advanceSection = document.createElement("div");
+        advanceSection.innerHTML = '<div style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px;margin-top:12px">Fund Advances</div>';
+
+        advances.forEach(entry => {
+            const dateObj = new Date(entry.timestamp);
+            const dispTime = isNaN(dateObj) ? "N/A": `${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([], {
+                hour: "2-digit", minute: "2-digit"
+            })}`;
+
+            const div = document.createElement("div");
+            div.className = "log-item";
+            div.innerHTML = `
+            <div style="flex:1;min-width:0">
+            <div style="font-weight:500;font-size:14px;display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span style="background:rgba(59,130,246,0.1);color:var(--accent-glow);border:1px solid var(--accent-glow);padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600">Fund Advance</span>
+            <span>${escapeHtml(entry.from_person)}</span>
+            <span style="color:var(--accent-glow)">→</span>
+            <span style="background:rgba(245,158,11,0.1);color:var(--warning-color);padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">System</span>
+            </div>
+            <div class="log-meta" style="margin-bottom:4px">
+            <span>${dispTime}</span>
+            ${entry.notes ? `&middot; <span style="color:var(--text-dim);font-style:italic">${escapeHtml(entry.notes)}</span>`: ""}
+            </div>
+            </div>
+            <div style="text-align:right;flex-shrink:0;margin-left:8px">
+            <div style="font-weight:600;color:var(--accent-glow);font-size:14px;margin-bottom:4px">${fmt(entry.amount)}</div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+            <span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-settlement-btn" data-id="${entry.id}">Delete</span>
+            </div>
+            </div>`;
+            advanceSection.appendChild(div);
+        });
+        container.appendChild(advanceSection);
+    }
+
+    // Render Settlements
+    if (settlements.length) {
+        const settleSection = document.createElement("div");
+        settleSection.innerHTML = '<div style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px;margin-top:16px">Settlements</div>';
+
+        settlements.forEach(entry => {
+            const dateObj = new Date(entry.timestamp);
+            const dispTime = isNaN(dateObj) ? "N/A": `${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([], {
+                hour: "2-digit", minute: "2-digit"
+            })}`;
+
+            const div = document.createElement("div");
+            div.className = "log-item";
+            div.innerHTML = `
+            <div style="flex:1;min-width:0">
+            <div style="font-weight:500;font-size:14px;display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span style="background:rgba(16,185,129,0.1);color:var(--success-glow);border:1px solid var(--success-glow);padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600">Settlement</span>
+            <span>${escapeHtml(entry.from_person)}</span>
+            <span style="color:var(--success-glow)">→</span>
+            <span>${escapeHtml(entry.to_person)}</span>
+            </div>
+            <div class="log-meta" style="margin-bottom:4px">
+            <span>${dispTime}</span>
+            ${entry.notes ? `&middot; <span style="color:var(--text-dim);font-style:italic">${escapeHtml(entry.notes)}</span>`: ""}
+            </div>
+            </div>
+            <div style="text-align:right;flex-shrink:0;margin-left:8px">
+            <div style="font-weight:600;color:var(--success-glow);font-size:14px;margin-bottom:4px">${fmt(entry.amount)}</div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+            <span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-settlement-btn" data-id="${entry.id}">Delete</span>
+            </div>
+            </div>`;
+            settleSection.appendChild(div);
+        });
+        container.appendChild(settleSection);
+    }
+
+    // Add event listeners
+    container.querySelectorAll(".del-settlement-btn").forEach(el =>
+        el.addEventListener("click", () => deletePreAllocSettlement(parseInt(el.dataset.id)))
+    );
+}
+
+function switchSettlementTab(type) {
+    // Update tab styling
+    document.querySelectorAll('.settlement-tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.type === type) btn.classList.add('active');
+    });
+
+    // Update form visibility
+    document.querySelectorAll('.settlement-form-content').forEach(form => {
+        form.style.display = 'none';
+    });
+
+    const formId = type === 'pre_allocation' ? 'preAllocSettleForm-fund': 'preAllocSettleForm-settlement';
+    document.getElementById(formId).style.display = 'block';
+}
+
+// ── Refresh settlement/fund-advance previews after dropdown repopulation ──────
+function _refreshSettlementPreviews() {
+    // Fund advance: show current person → System
+    const fundSel = document.getElementById("pasFundFrom");
+    const fundPreview = document.getElementById("pasFundPreview");
+    const fundFrom = document.getElementById("pasFundFromPreview");
+    if (fundSel && fundPreview && fundFrom && fundSel.value) {
+        fundPreview.style.display = 'flex';
+        fundFrom.textContent = fundSel.options[fundSel.selectedIndex].text;
+    }
+
+    // Settlement: show current from → to
+    const fromSel = document.getElementById("pasSettleFrom");
+    const toSel   = document.getElementById("pasSettleTo");
+    const settlePreview = document.getElementById("pasSettlePreview");
+    const settleFrom = document.getElementById("pasSettleFromPreview");
+    const settleTo   = document.getElementById("pasSettleToPreview");
+    if (fromSel && toSel && settlePreview && settleFrom && settleTo && fromSel.value && toSel.value) {
+        settlePreview.style.display = 'flex';
+        settleFrom.textContent = fromSel.options[fromSel.selectedIndex].text;
+        settleTo.textContent   = toSel.options[toSel.selectedIndex].text;
+    }
+}
+
+// ── Pre-allocation & Settlement form ────────────────────────────────────────
+function setupPreAllocSettleForm() {
+    // Set current date/time
+    const fundDateTime = document.getElementById("pasFundDateTime");
+    const settleDateTime = document.getElementById("pasSettleDateTime");
+    if (fundDateTime && !fundDateTime.value) {
+        const now = new Date();
+        fundDateTime.value = now.toISOString().slice(0, 16);
+    }
+    if (settleDateTime && !settleDateTime.value) {
+        const now = new Date();
+        settleDateTime.value = now.toISOString().slice(0, 16);
+    }
+
+    // FUND ADVANCE FORM
+    const fundForm = document.getElementById("preAllocSettleForm-fund");
+    if (fundForm) {
+        // Helper: sync fund advance preview from current dropdown value
+        const updateFundPreview = () => {
+            const sel = document.getElementById("pasFundFrom");
+            const preview = document.getElementById("pasFundPreview");
+            const previewFrom = document.getElementById("pasFundFromPreview");
+            if (!sel || !preview || !previewFrom) return;
+            if (sel.value) {
+                preview.style.display = 'flex';
+                previewFrom.textContent = sel.options[sel.selectedIndex].text;
+            } else {
+                preview.style.display = 'none';
+            }
+        };
+
+        // Update preview whenever selection changes (via custom drawer)
+        document.getElementById("pasFundFrom")?.addEventListener("change", updateFundPreview);
+
+        // Also initialise immediately so the default selection is reflected
+        updateFundPreview();
+
+        fundForm.addEventListener("submit",
+            async (e) => {
+                e.preventDefault();
+                const from_person = document.getElementById("pasFundFrom").value;
+                const amount = parseFloat(document.getElementById("pasFundAmount").value);
+                const timestamp = document.getElementById("pasFundDateTime").value;
+                const notes = document.getElementById("pasFundNotes").value.trim() || null;
+
+                if (!validName(from_person)) {
+                    showToast("Select a person.", "error"); return;
+                }
+                if (amount <= 0) {
+                    showToast("Enter a valid amount.", "error"); return;
+                }
+
+                const result = await apiFetch("/api/pre-allocation-settlement/add", {
+                    to_person: "System", // Always "System" for fund advances
+                    from_person: from_person,
+                    type: "pre_allocation",
+                    amount: amount,
+                    timestamp: timestamp,
+                    notes: notes,
+                    trip_id: currentTripId
+                });
+
+                if (result?.success) {
+                    showToast("Fund advance recorded!", "success");
+                    fundForm.reset();
+                    const now = new Date();
+                    fundDateTime.value = now.toISOString().slice(0, 16);
+                    loadData();
+                }
+            });
+    }
+
+    // SETTLEMENT FORM
+    const settleForm = document.getElementById("preAllocSettleForm-settlement");
+    if (settleForm) {
+        // Update preview when persons selected
+        const updateSettlePreview = () => {
+            const fromSel = document.getElementById("pasSettleFrom");
+            const toSel   = document.getElementById("pasSettleTo");
+            const preview = document.getElementById("pasSettlePreview");
+            const previewFrom = document.getElementById("pasSettleFromPreview");
+            const previewTo   = document.getElementById("pasSettleToPreview");
+            if (!fromSel || !toSel || !preview || !previewFrom || !previewTo) return;
+
+            if (fromSel.value && toSel.value) {
+                preview.style.display = 'flex';
+                previewFrom.textContent = fromSel.options[fromSel.selectedIndex].text;
+                previewTo.textContent   = toSel.options[toSel.selectedIndex].text;
+            } else {
+                preview.style.display = 'none';
+            }
+        };
+
+        document.getElementById("pasSettleFrom")?.addEventListener("change", updateSettlePreview);
+        document.getElementById("pasSettleTo")?.addEventListener("change", updateSettlePreview);
+
+        // Initialise immediately with default dropdown values
+        updateSettlePreview();
+
+        settleForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const from_person = document.getElementById("pasSettleFrom").value;
+            const to_person = document.getElementById("pasSettleTo").value;
+            const amount = parseFloat(document.getElementById("pasSettleAmount").value);
+            const timestamp = document.getElementById("pasSettleDateTime").value;
+            const notes = document.getElementById("pasSettleNotes").value.trim() || null;
+
+            if (!validName(from_person)) {
+                showToast("Select payer.", "error"); return;
+            }
+            if (!validName(to_person)) {
+                showToast("Select receiver.", "error"); return;
+            }
+            if (from_person === to_person) {
+                showToast("Payer and receiver must be different.", "error"); return;
+            }
+            if (amount <= 0) {
+                showToast("Enter a valid amount.", "error"); return;
+            }
+
+            const result = await apiFetch("/api/pre-allocation-settlement/add", {
+                to_person: to_person,
+                from_person: from_person,
+                type: "settle_up",
+                amount: amount,
+                timestamp: timestamp,
+                notes: notes,
+                trip_id: currentTripId
+            });
+
+            if (result?.success) {
+                showToast("Settlement recorded!", "success");
+                settleForm.reset();
+                const now = new Date();
+                settleDateTime.value = now.toISOString().slice(0, 16);
+                loadData();
+            }
+        });
+    }
+}
+
+// ── Delete pre-allocation/settlement ────────────────────────────────────────
+async function deletePreAllocSettlement(id) {
+    if (!confirm("Delete this entry?")) return;
+    const result = await apiFetch("/api/pre-allocation-settlement/delete", {
+        id
+    });
+    if (result?.success) {
+        showToast("Entry deleted!", "success");
+        loadData();
+    }
+}
+
+
 
 // ── Edit expense modal ────────────────────────────────────────────────────
 function openEditExpenseModal(expId) {
@@ -679,17 +1226,18 @@ function openEditExpenseModal(expId) {
     const modal = document.getElementById("editExpenseModal");
     if (!modal) return;
 
-    document.getElementById("editExpId").value          = exp.id;
-    document.getElementById("editExpDesc").value        = exp.description;
-    document.getElementById("editExpAmount").value      = exp.amount;
-    document.getElementById("editExpDateTime").value    = exp.timestamp?.slice(0,16) || "";
+    document.getElementById("editExpId").value = exp.id;
+    document.getElementById("editExpDesc").value = exp.description;
+    document.getElementById("editExpAmount").value = exp.amount;
+    document.getElementById("editExpDateTime").value = exp.timestamp?.slice(0, 16) || "";
 
     // Populate payer dropdown
     const paidBySel = document.getElementById("editExpPaidBy");
     paidBySel.innerHTML = "";
-    const people = [
-        { name:RESERVED },
-        ...globalPeopleList.filter(p => p.name !== RESERVED && p.is_active).sort((a,b) => a.name.localeCompare(b.name))
+    const people = [{
+        name: RESERVED
+    },
+        ...globalPeopleList.filter(p => p.name !== RESERVED && p.is_active).sort((a, b) => a.name.localeCompare(b.name))
     ];
     people.forEach(p => {
         const o = document.createElement("option");
@@ -707,7 +1255,8 @@ function openEditExpenseModal(expId) {
         if (c.mainCat === exp.main_cat) o.selected = true;
         catSel.appendChild(o);
     });
-    populateEditSubDropdown(exp.main_cat, exp.sub_cat);
+    populateEditSubDropdown(exp.main_cat,
+        exp.sub_cat);
 
     // Populate split checkboxes
     const splitGrid = document.getElementById("editSplitGrid");
@@ -715,11 +1264,32 @@ function openEditExpenseModal(expId) {
     people.forEach(p => {
         const lbl = document.createElement("label");
         lbl.className = "checkbox-pill-item";
-        lbl.innerHTML = `<input type="checkbox" class="edit-split-cb" value="${escapeHtml(p.name)}" ${(exp.split_with || []).includes(p.name) ? "checked" : ""}><span>${escapeHtml(p.name)}</span>`;
+        lbl.innerHTML = `<input type="checkbox" class="edit-split-cb" value="${escapeHtml(p.name)}" ${(exp.split_with || []).includes(p.name) ? "checked": ""}><span>${escapeHtml(p.name)}</span>`;
         splitGrid.appendChild(lbl);
     });
 
     modal.classList.add("active");
+}
+
+function initSettlementTabSwitching() {
+    const fundBtn = document.querySelector('[data-type="pre_allocation"]');
+    const settleBtn = document.querySelector('[data-type="settle_up"]');
+
+    if (fundBtn) {
+        fundBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            switchSettlementTab('pre_allocation');
+        });
+    }
+
+    if (settleBtn) {
+        settleBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            switchSettlementTab('settle_up');
+        });
+    }
 }
 
 // ── App engine ────────────────────────────────────────────────────────────
@@ -740,21 +1310,23 @@ function initAppEngine() {
             this.classList.add("active");
             const tid = this.getAttribute("data-target");
             document.getElementById(tid)?.classList.add("active");
-            const labels = { "view-home":"Log","view-dashboard":"Trips","view-history":"Logs","view-analytics":"Metrics","view-settings":"Setup" };
+            const labels = {
+                "view-home": "Log", "view-group": "Splits", "view-history": "History", "view-analytics": "Analytics", "view-settings": "Setup"
+            };
             const h = document.querySelector("header h1");
             if (h) h.textContent = labels[tid] || "";
             if (tid === "view-dashboard") renderTripDashboard();
-            
+
             // Pre-fill "This Trip" form when settings tab is opened
             if (tid === "view-settings") {
                 const trip = globalTripsList.find(t => t.id === currentTripId);
                 if (trip) {
                     const nameEl = document.getElementById("editTripName");
-                    const curEl  = document.getElementById("editTripCurrency");
-                    const budEl  = document.getElementById("editTripBudget");
+                    const curEl = document.getElementById("editTripCurrency");
+                    const budEl = document.getElementById("editTripBudget");
                     if (nameEl) nameEl.value = trip.name || "";
-                    if (curEl)  curEl.value  = trip.currency || "INR";
-                    if (budEl)  budEl.value  = trip.budget || "";
+                    if (curEl) curEl.value = trip.currency || "INR";
+                    if (budEl) budEl.value = trip.budget || "";
                 }
             }
         });
@@ -779,21 +1351,24 @@ function initAppEngine() {
         populateDeleteSubDropdown(this.value);
     });
     document.getElementById("editExpCat")?.addEventListener("change", function () {
-        populateEditSubDropdown(this.value, "");
+        populateEditSubDropdown(this.value,
+            "");
     });
 
     // ── Add trip ───────────────────────────────────────────────────────────
     document.getElementById("addTripBtn")?.addEventListener("click", async () => {
         const nameInput = document.getElementById("newTripInput");
-        const currency  = document.getElementById("newTripCurrency")?.value || "INR";
-        const budgetEl  = document.getElementById("newTripBudget");
-        const name      = nameInput?.value.trim();
-        const budget    = budgetEl?.value ? parseFloat(budgetEl.value) : null;
+        const currency = document.getElementById("newTripCurrency")?.value || "INR";
+        const budgetEl = document.getElementById("newTripBudget");
+        const name = nameInput?.value.trim();
+        const budget = budgetEl?.value ? parseFloat(budgetEl.value): null;
 
         if (!validName(name)) return showToast("Invalid trip name.", "error");
         if (budget !== null && !validAmount(budget)) return showToast("Invalid budget amount.", "error");
 
-        const data = await apiFetch("/api/trips/add", { name, currency, budget });
+        const data = await apiFetch("/api/trips/add", {
+            name, currency, budget
+        });
         if (data?.id) {
             nameInput.value = ""; if (budgetEl) budgetEl.value = "";
             _saveTripId(data.id);
@@ -803,168 +1378,213 @@ function initAppEngine() {
     });
 
     // ── Edit trip (budget/currency) ────────────────────────────────────────
-    document.getElementById("saveTripSettingsBtn")?.addEventListener("click", async () => {
-        const trip = globalTripsList.find(t => t.id === currentTripId);
-        if (!trip) return;
-        const name     = document.getElementById("editTripName")?.value.trim() || trip.name;
-        const currency = document.getElementById("editTripCurrency")?.value || "INR";
-        const budgetEl = document.getElementById("editTripBudget");
-        const budget   = budgetEl?.value ? parseFloat(budgetEl.value) : null;
+    document.getElementById("saveTripSettingsBtn")?.addEventListener("click",
+        async () => {
+            const trip = globalTripsList.find(t => t.id === currentTripId);
+            if (!trip) return;
+            const name = document.getElementById("editTripName")?.value.trim() || trip.name;
+            const currency = document.getElementById("editTripCurrency")?.value || "INR";
+            const budgetEl = document.getElementById("editTripBudget");
+            const budget = budgetEl?.value ? parseFloat(budgetEl.value): null;
 
-        if (!validName(name)) return showToast("Invalid trip name.", "error");
-        const data = await apiFetch("/api/trips/update", { id: currentTripId, name, currency, budget });
-        if (data) { await pullTripsList(true); showToast("Trip settings saved.", "success"); }
-    });
+            if (!validName(name)) return showToast("Invalid trip name.", "error");
+            const data = await apiFetch("/api/trips/update", {
+                id: currentTripId, name, currency, budget
+            });
+            if (data) {
+                await pullTripsList(true); showToast("Trip settings saved.", "success");
+            }
+        });
 
     // ── Add person ─────────────────────────────────────────────────────────
-    document.getElementById("addPersonBtn")?.addEventListener("click", async () => {
-        const input = document.getElementById("newPersonInput");
-        const name  = input?.value.trim();
-        if (!validName(name)) return showToast("Invalid name.", "error");
-        if (name.toLowerCase() === RESERVED) return showToast(`"${RESERVED}" is reserved.`, "error");
-        const data = await apiFetch("/api/people/add", { trip_id: currentTripId, name });
-        if (data) { input.value = ""; await pullPeopleList(); showToast(`${name} added.`, "success"); }
-    });
+    document.getElementById("addPersonBtn")?.addEventListener("click",
+        async () => {
+            const input = document.getElementById("newPersonInput");
+            const name = input?.value.trim();
+            if (!validName(name)) return showToast("Invalid name.", "error");
+            if (name.toLowerCase() === RESERVED) return showToast(`"${RESERVED}" is reserved.`, "error");
+            const data = await apiFetch("/api/people/add", {
+                trip_id: currentTripId, name
+            });
+            if (data) {
+                input.value = ""; await pullPeopleList(); showToast(`${name} added.`, "success");
+            }
+        });
 
     // ── Expense form ───────────────────────────────────────────────────────
-    document.getElementById("expenseForm")?.addEventListener("submit", async function (e) {
-        e.preventDefault();
-        const paidBy    = document.getElementById("expPaidBy")?.value;
-        const splitWith = Array.from(document.querySelectorAll(".expense-split-checkbox:checked")).map(cb => cb.value);
-        const timestamp = document.getElementById("expDateTime")?.value;
-        const desc      = document.getElementById("expDesc")?.value.trim();
-        const amount    = document.getElementById("expAmount")?.value;
-        const mainCat   = document.getElementById("expCategory")?.value;
-        const subCat    = document.getElementById("expSubCategory")?.value;
+    document.getElementById("expenseForm")?.addEventListener("submit",
+        async function (e) {
+            e.preventDefault();
+            const paidBy = document.getElementById("expPaidBy")?.value;
+            const splitWith = Array.from(document.querySelectorAll(".expense-split-checkbox:checked")).map(cb => cb.value);
+            const timestamp = document.getElementById("expDateTime")?.value;
+            const desc = document.getElementById("expDesc")?.value.trim();
+            const amount = document.getElementById("expAmount")?.value;
+            const mainCat = document.getElementById("expCategory")?.value;
+            const subCat = document.getElementById("expSubCategory")?.value;
 
-        if (!validDesc(desc))    return showToast("Description required.", "error");
-        if (!validAmount(amount)) return showToast("Invalid amount.", "error");
-        if (!paidBy)             return showToast("Select a payer.", "error");
-        if (!mainCat || !subCat) return showToast("Select a category.", "error");
+            if (!validDesc(desc)) return showToast("Description required.", "error");
+            if (!validAmount(amount)) return showToast("Invalid amount.", "error");
+            if (!paidBy) return showToast("Select a payer.", "error");
+            if (!mainCat || !subCat) return showToast("Select a category.", "error");
 
-        const data = await apiFetch("/api/expense/add", {
-            desc, amount, mainCat, subCat, timestamp, paidBy,
-            trip_id: currentTripId, splitWith: splitWith.length ? splitWith : [RESERVED]
+            const data = await apiFetch("/api/expense/add", {
+                desc, amount, mainCat, subCat, timestamp, paidBy,
+                trip_id: currentTripId, splitWith: splitWith.length ? splitWith: [RESERVED]
+            });
+            if (data) {
+                document.getElementById("expDesc").value = "";
+                document.getElementById("expAmount").value = "";
+                setDefaultDateTime();
+                await pullTripsList(true);
+                showToast("Expense logged.", "success");
+            }
         });
-        if (data) {
-            document.getElementById("expDesc").value   = "";
-            document.getElementById("expAmount").value = "";
-            setDefaultDateTime();
-            await pullTripsList(true);
-            showToast("Expense logged.", "success");
-        }
-    });
 
     // ── Edit expense form ──────────────────────────────────────────────────
-    document.getElementById("editExpenseForm")?.addEventListener("submit", async function (e) {
-        e.preventDefault();
-        const expId     = parseInt(document.getElementById("editExpId").value);
-        const desc      = document.getElementById("editExpDesc")?.value.trim();
-        const amount    = document.getElementById("editExpAmount")?.value;
-        const timestamp = document.getElementById("editExpDateTime")?.value;
-        const paidBy    = document.getElementById("editExpPaidBy")?.value;
-        const mainCat   = document.getElementById("editExpCat")?.value;
-        const subCat    = document.getElementById("editExpSubCat")?.value;
-        const splitWith = Array.from(document.querySelectorAll(".edit-split-cb:checked")).map(cb => cb.value);
+    document.getElementById("editExpenseForm")?.addEventListener("submit",
+        async function (e) {
+            e.preventDefault();
+            const expId = parseInt(document.getElementById("editExpId").value);
+            const desc = document.getElementById("editExpDesc")?.value.trim();
+            const amount = document.getElementById("editExpAmount")?.value;
+            const timestamp = document.getElementById("editExpDateTime")?.value;
+            const paidBy = document.getElementById("editExpPaidBy")?.value;
+            const mainCat = document.getElementById("editExpCat")?.value;
+            const subCat = document.getElementById("editExpSubCat")?.value;
+            const splitWith = Array.from(document.querySelectorAll(".edit-split-cb:checked")).map(cb => cb.value);
 
-        if (!validDesc(desc))    return showToast("Description required.", "error");
-        if (!validAmount(amount)) return showToast("Invalid amount.", "error");
-        if (!paidBy)             return showToast("Select a payer.", "error");
+            if (!validDesc(desc)) return showToast("Description required.", "error");
+            if (!validAmount(amount)) return showToast("Invalid amount.", "error");
+            if (!paidBy) return showToast("Select a payer.", "error");
 
-        const data = await apiFetch("/api/expense/edit", {
-            id: expId, desc, amount, mainCat, subCat, timestamp, paidBy,
-            splitWith: splitWith.length ? splitWith : [RESERVED]
+            const data = await apiFetch("/api/expense/edit", {
+                id: expId, desc, amount, mainCat, subCat, timestamp, paidBy,
+                splitWith: splitWith.length ? splitWith: [RESERVED]
+            });
+            if (data) {
+                document.getElementById("editExpenseModal")?.classList.remove("active");
+                await pullTripsList(true);
+                showToast("Expense updated.", "success");
+            }
         });
-        if (data) {
+
+    document.getElementById("cancelEditExpBtn")?.addEventListener("click",
+        () => {
             document.getElementById("editExpenseModal")?.classList.remove("active");
-            await pullTripsList(true);
-            showToast("Expense updated.", "success");
-        }
-    });
+        });
 
-    document.getElementById("cancelEditExpBtn")?.addEventListener("click", () => {
-        document.getElementById("editExpenseModal")?.classList.remove("active");
-    });
-
-    document.getElementById("cancelEditExpBtn2")?.addEventListener("click", () => {
-        document.getElementById("editExpenseModal")?.classList.remove("active");
-    });
+    document.getElementById("cancelEditExpBtn2")?.addEventListener("click",
+        () => {
+            document.getElementById("editExpenseModal")?.classList.remove("active");
+        });
 
     // ── Categories ─────────────────────────────────────────────────────────
-    document.getElementById("addMainBtn")?.addEventListener("click", async () => {
-        const input   = document.getElementById("newMainInput");
-        const mainCat = input?.value.trim();
-        if (!validName(mainCat)) return showToast("Invalid category name.", "error");
-        const data = await apiFetch("/api/category/add_main", { mainCat });
-        if (data) { input.value = ""; await pullDatabaseState(); showToast("Category added.", "success"); }
-    });
+    document.getElementById("addMainBtn")?.addEventListener("click",
+        async () => {
+            const input = document.getElementById("newMainInput");
+            const mainCat = input?.value.trim();
+            if (!validName(mainCat)) return showToast("Invalid category name.", "error");
+            const data = await apiFetch("/api/category/add_main", {
+                mainCat
+            });
+            if (data) {
+                input.value = ""; await pullDatabaseState(); showToast("Category added.", "success");
+            }
+        });
 
-    document.getElementById("addSubBtn")?.addEventListener("click", async () => {
-        const mainTarget = document.getElementById("targetMainSelect")?.value;
-        const input      = document.getElementById("newSubInput");
-        const subName    = input?.value.trim();
-        if (!mainTarget) return showToast("Select a main category.", "error");
-        if (!validName(subName)) return showToast("Invalid sub-category name.", "error");
-        const data = await apiFetch("/api/category/add_sub", { mainCat: mainTarget, subCat: subName });
-        if (data) { input.value = ""; await pullDatabaseState(); showToast("Sub-category added.", "success"); }
-    });
+    document.getElementById("addSubBtn")?.addEventListener("click",
+        async () => {
+            const mainTarget = document.getElementById("targetMainSelect")?.value;
+            const input = document.getElementById("newSubInput");
+            const subName = input?.value.trim();
+            if (!mainTarget) return showToast("Select a main category.", "error");
+            if (!validName(subName)) return showToast("Invalid sub-category name.", "error");
+            const data = await apiFetch("/api/category/add_sub", {
+                mainCat: mainTarget, subCat: subName
+            });
+            if (data) {
+                input.value = ""; await pullDatabaseState(); showToast("Sub-category added.", "success");
+            }
+        });
 
-    document.getElementById("deleteMainCatBtn")?.addEventListener("click", async () => {
-        const mainCat = document.getElementById("deleteMainSelect")?.value;
-        if (!mainCat) return showToast("Select a category to delete.", "error");
-        const ok = await showCustomConfirm("Delete Category", `Delete "${mainCat}" and all its sub-categories? Expenses using this category must be reassigned first.`);
-        if (!ok) return;
-        const data = await apiFetch("/api/category/delete_main", { mainCat });
-        if (data) { await pullDatabaseState(); showToast(`"${mainCat}" deleted.`, "success"); }
-    });
+    document.getElementById("deleteMainCatBtn")?.addEventListener("click",
+        async () => {
+            const mainCat = document.getElementById("deleteMainSelect")?.value;
+            if (!mainCat) return showToast("Select a category to delete.", "error");
+            const ok = await showCustomConfirm("Delete Category", `Delete "${mainCat}" and all its sub-categories? Expenses using this category must be reassigned first.`);
+            if (!ok) return;
+            const data = await apiFetch("/api/category/delete_main", {
+                mainCat
+            });
+            if (data) {
+                await pullDatabaseState(); showToast(`"${mainCat}" deleted.`, "success");
+            }
+        });
 
-    document.getElementById("deleteSubCatBtn")?.addEventListener("click", async () => {
-        const mainCat = document.getElementById("deleteMainSelect")?.value;
-        const subCat  = document.getElementById("deleteSubSelect")?.value;
-        if (!mainCat || !subCat) return showToast("Select a main and sub-category.", "error");
-        const ok = await showCustomConfirm("Delete Sub-Category", `Delete "${subCat}" from "${mainCat}"?`);
-        if (!ok) return;
-        const data = await apiFetch("/api/category/delete_sub", { mainCat, subCat });
-        if (data) { await pullDatabaseState(); showToast(`"${subCat}" deleted.`, "success"); }
-    });
+    document.getElementById("deleteSubCatBtn")?.addEventListener("click",
+        async () => {
+            const mainCat = document.getElementById("deleteMainSelect")?.value;
+            const subCat = document.getElementById("deleteSubSelect")?.value;
+            if (!mainCat || !subCat) return showToast("Select a main and sub-category.", "error");
+            const ok = await showCustomConfirm("Delete Sub-Category", `Delete "${subCat}" from "${mainCat}"?`);
+            if (!ok) return;
+            const data = await apiFetch("/api/category/delete_sub", {
+                mainCat, subCat
+            });
+            if (data) {
+                await pullDatabaseState(); showToast(`"${subCat}" deleted.`, "success");
+            }
+        });
 
     // ── PDF ────────────────────────────────────────────────────────────────
-    document.getElementById("pdfBtn")?.addEventListener("click", () => {
-        if (!globalCachedData?.expenses?.length) {
-            showToast("No expenses to export. Add some expenses first.", "error");
-            return;
-        }
+    document.getElementById("pdfBtn")?.addEventListener("click",
+        () => {
+            if (!globalCachedData?.expenses?.length) {
+                showToast("No expenses to export. Add some expenses first.", "error");
+                return;
+            }
 
-        const now      = new Date();
-        const sel      = document.getElementById("globalTripSelector");
-        const tripName = sel?.options[sel.selectedIndex]?.text || "Trip";
-        const dateStr  = `${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+            const now = new Date();
+            const sel = document.getElementById("globalTripSelector");
+            const tripName = sel?.options[sel.selectedIndex]?.text || "Trip";
+            const dateStr = `${now.toLocaleDateString()} ${now.toLocaleTimeString([], {
+                hour: "2-digit", minute: "2-digit"
+            })}`;
 
-        // Stamp title and date into the already-populated print container
-        const titleEl = document.getElementById("printReportTitle");
-        const dateEl  = document.getElementById("printGenerationDate");
-        if (titleEl) titleEl.textContent = `${tripName} — Trip Summary`;
-        if (dateEl)  dateEl.textContent  = `Generated: ${dateStr}`;
+            // Stamp title and date into the already-populated print container
+            const titleEl = document.getElementById("printReportTitle");
+            const dateEl = document.getElementById("printGenerationDate");
+            if (titleEl) titleEl.textContent = `${tripName} — Trip Summary`;
+            if (dateEl) dateEl.textContent = `Generated: ${dateStr}`;
 
-        // Temporarily set document.title so browser uses it as the PDF filename
-        const prevTitle  = document.title;
-        const dateSuffix = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
-        document.title   = `${tripName}_${dateSuffix}`;
-        window.print();
-        document.title   = prevTitle;
-    });
+            // Temporarily set document.title so browser uses it as the PDF filename
+            const prevTitle = document.title;
+            const dateSuffix = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+            document.title = `${tripName}_${dateSuffix}`;
+            window.print();
+            document.title = prevTitle;
+        });
 
     // ── Export JSON ────────────────────────────────────────────────────────
-    document.getElementById("exportBtn")?.addEventListener("click", () => {
-        exportDataSnapshot();
-    });
+    document.getElementById("exportBtn")?.addEventListener("click",
+        () => {
+            exportDataSnapshot();
+        });
+
+    // ── Pre-allocation & Settlement form (setup once on page load) ──────────
+    initSettlementTabSwitching();
+    setupPreAllocSettleForm();
 }
 
 // ── CRUD helpers ──────────────────────────────────────────────────────────
 async function deleteTripInstance(id) {
-    const ok = await showCustomConfirm("Delete Trip", "Permanently delete all logs for this trip?");
+    const ok = await showCustomConfirm("Delete Trip",
+        "Permanently delete all logs for this trip?");
     if (!ok) return;
-    const data = await apiFetch("/api/trips/delete", { id });
+    const data = await apiFetch("/api/trips/delete", {
+        id
+    });
     if (data) {
         if (currentTripId === id) localStorage.removeItem(LS_TRIP_KEY);
         await pullTripsList(true);
@@ -974,7 +1594,7 @@ async function deleteTripInstance(id) {
 
 async function deletePersonInstance(id) {
     const person = globalPeopleList.find(p => p.id === id);
-    const name   = person?.name;
+    const name = person?.name;
     const hasSpend = name && (globalCachedData?.expenses || []).some(exp =>
         exp.paid_by === name || (Array.isArray(exp.split_with) && exp.split_with.includes(name))
     );
@@ -983,77 +1603,95 @@ async function deletePersonInstance(id) {
     }
     const ok = await showCustomConfirm("Remove Member", "Soft-remove this person? Their historical expenses are preserved.");
     if (!ok) return;
-    const data = await apiFetch("/api/people/delete", { id });
-    if (data) { await pullDatabaseState(); showToast("Member removed (historical data intact).", "success"); }
+    const data = await apiFetch("/api/people/delete", {
+        id
+    });
+    if (data) {
+        await pullDatabaseState(); showToast("Member removed (historical data intact).", "success");
+    }
 }
 
 async function restorePersonInstance(name) {
-    const data = await apiFetch("/api/people/add", { trip_id: currentTripId, name });
-    if (data) { await pullPeopleList(); showToast(`${name} restored.`, "success"); }
+    const data = await apiFetch("/api/people/add", {
+        trip_id: currentTripId, name
+    });
+    if (data) {
+        await pullPeopleList(); showToast(`${name} restored.`, "success");
+    }
 }
 
 async function deleteExpenseEntry(id) {
     const ok = await showCustomConfirm("Delete Expense", "Remove this expense entry?");
     if (!ok) return;
-    const data = await apiFetch("/api/expense/delete", { id });
-    if (data) { await pullTripsList(true); showToast("Entry deleted.", "success"); }
+    const data = await apiFetch("/api/expense/delete", {
+        id
+    });
+    if (data) {
+        await pullTripsList(true); showToast("Entry deleted.", "success");
+    }
 }
 
 async function clearAllDatabaseLogs() {
     const ok = await showCustomConfirm("Wipe Logs", "Delete ALL expense logs for this trip?");
     if (!ok) return;
-    const data = await apiFetch("/api/clear", { trip_id: currentTripId });
-    if (data) { await pullTripsList(true); showToast("Logs wiped.", "success"); }
+    const data = await apiFetch("/api/clear", {
+        trip_id: currentTripId
+    });
+    if (data) {
+        await pullTripsList(true); showToast("Logs wiped.", "success");
+    }
 }
 
 function exportDataSnapshot() {
-    const sel      = document.getElementById("globalTripSelector");
+    const sel = document.getElementById("globalTripSelector");
     const tripName = sel?.options[sel.selectedIndex]?.text || "trip";
-    const trip     = globalTripsList.find(t => t.id === currentTripId) || {};
+    const trip = globalTripsList.find(t => t.id === currentTripId) || {};
 
     const payload = {
         _export_version: 1,
         _exported_at: new Date().toISOString(),
 
         trip: {
-            id:          currentTripId,
-            name:        trip.name        || tripName,
-            currency:    trip.currency    || globalCachedData.currency || "INR",
-            budget:      trip.budget      ?? globalCachedData.budget ?? null,
-            created_at:  trip.created_at  || null,
+            id: currentTripId,
+            name: trip.name || tripName,
+            currency: trip.currency || globalCachedData.currency || "INR",
+            budget: trip.budget ?? globalCachedData.budget ?? null,
+            created_at: trip.created_at || null,
             total_spend: trip.total_spend ?? null,
         },
 
         people: globalPeopleList.map(p => ({
-            id:        p.id,
-            name:      p.name,
+            id: p.id,
+            name: p.name,
             is_active: p.is_active ?? 1,
         })),
 
         categories: (globalCachedData.categories || []).map(c => ({
             mainCat: c.mainCat,
-            subs:    c.subs || [],
+            subs: c.subs || [],
         })),
 
         expenses: (globalCachedData.expenses || []).map(e => ({
-            id:          e.id,
+            id: e.id,
             description: e.description,
-            amount:      e.amount,
-            main_cat:    e.main_cat,
-            sub_cat:     e.sub_cat,
-            timestamp:   e.timestamp,
-            paid_by:     e.paid_by,
-            split_with:  Array.isArray(e.split_with) ? e.split_with : [],
+            amount: e.amount,
+            main_cat: e.main_cat,
+            sub_cat: e.sub_cat,
+            timestamp: e.timestamp,
+            paid_by: e.paid_by,
+            split_with: Array.isArray(e.split_with) ? e.split_with: [],
         })),
     };
 
-    const now  = new Date();
-    const ds   = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
-    const filename = `${tripName.replace(/\s+/g,"_")}_${ds}.json`;
+    const now = new Date();
+    const ds = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const filename = `${tripName.replace(/\s+/g, "_")}_${ds}.json`;
 
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
@@ -1063,10 +1701,10 @@ function exportDataSnapshot() {
 // ── Confirm modal ─────────────────────────────────────────────────────────
 function showCustomConfirm(title, message) {
     return new Promise(resolve => {
-        const modal  = document.getElementById("customModal");
-        const btnOk  = document.getElementById("customModalConfirmBtn");
-        const btnNo  = document.getElementById("customModalCancelBtn");
-        document.getElementById("customModalTitle").textContent   = title;
+        const modal = document.getElementById("customModal");
+        const btnOk = document.getElementById("customModalConfirmBtn");
+        const btnNo = document.getElementById("customModalCancelBtn");
+        document.getElementById("customModalTitle").textContent = title;
         document.getElementById("customModalMessage").textContent = message;
         modal.classList.add("active");
         function done(val) {
@@ -1084,21 +1722,36 @@ function showCustomConfirm(title, message) {
 
 // ── Custom select drawer ──────────────────────────────────────────────────
 function setupCustomDropdownInterceptors() {
-    ["#globalTripSelector","#expPaidBy","#expCategory","#expSubCategory","#targetMainSelect","#deleteMainSelect","#deleteSubSelect"].forEach(sel => {
-        const el = document.querySelector(sel);
-        if (!el) return;
-        el.removeEventListener("mousedown", _onDropdown);
-        el.addEventListener("mousedown", _onDropdown);
-    });
+    ["#globalTripSelector",
+        "#expPaidBy",
+        "#expCategory",
+        "#expSubCategory",
+        "#targetMainSelect",
+        "#deleteMainSelect",
+        "#deleteSubSelect",
+        "#editExpPaidBy",
+        "#editExpCat",
+        "#editExpSubCat",
+        "#pasType",
+        "#pasFundFrom",
+        "#pasSettleFrom",
+        "#pasSettleTo"].forEach(sel => {
+            const el = document.querySelector(sel);
+            if (!el) return;
+            el.removeEventListener("mousedown", _onDropdown);
+            el.addEventListener("mousedown", _onDropdown);
+        });
 }
 
-function _onDropdown(e) { e.preventDefault(); this.blur(); _openDrawer(this); }
+function _onDropdown(e) {
+    e.preventDefault(); this.blur(); _openDrawer(this);
+}
 
 function _openDrawer(sel) {
-    const overlay   = document.getElementById("customSelectModal");
+    const overlay = document.getElementById("customSelectModal");
     const container = document.getElementById("customSelectOptionsContainer");
-    const labelEl   = document.getElementById("customSelectTitle");
-    const closeBtn  = document.getElementById("customSelectClose");
+    const labelEl = document.getElementById("customSelectTitle");
+    const closeBtn = document.getElementById("customSelectClose");
     if (!overlay || !container) return;
 
     const fieldLabel = sel.closest(".form-group")?.querySelector("label")?.textContent || "Select";
@@ -1107,7 +1760,7 @@ function _openDrawer(sel) {
 
     Array.from(sel.options).forEach(opt => {
         const item = document.createElement("div");
-        item.className = `drawer-option-item${opt.value === sel.value ? " selected" : ""}`;
+        item.className = `drawer-option-item${opt.value === sel.value ? " selected": ""}`;
         item.textContent = opt.text;
         item.addEventListener("click", () => {
             sel.value = opt.value;
@@ -1123,7 +1776,9 @@ function _openDrawer(sel) {
         closeBtn?.removeEventListener("click", close);
         overlay.removeEventListener("click", outside);
     }
-    function outside(e) { if (e.target === overlay) close(); }
+    function outside(e) {
+        if (e.target === overlay) close();
+    }
     closeBtn?.addEventListener("click", close);
     overlay.addEventListener("click", outside);
 }
@@ -1131,13 +1786,13 @@ function _openDrawer(sel) {
 // ── Utilities ─────────────────────────────────────────────────────────────
 function escapeHtml(str) {
     if (str == null) return "";
-    return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
         navigator.serviceWorker.register("/sw.js")
-            .then(r => console.log("SW:", r.scope))
-            .catch(e => console.warn("SW failed:", e));
+        .then(r => console.log("SW:", r.scope))
+        .catch(e => console.warn("SW failed:", e));
     });
 }

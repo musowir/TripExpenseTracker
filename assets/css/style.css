@@ -508,7 +508,7 @@ button.btn-primary:active {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.8);
-    z-index: 2500;
+    z-index: 2000;
     display: none;
     align-items: center;
     justify-content: center;
@@ -770,10 +770,10 @@ button.btn-primary:active {
 
 /* --- CUSTOM OVERLAY COMPONENTS (Fixes 1000477209.jpg & 1000477210.jpg) --- */
 .custom-modal-overlay {
-    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999999;
     background: rgba(4, 7, 13, 0.8); backdrop-filter: blur(4px);
     display: flex; align-items: center; justify-content: center;
-    z-index: 2000; opacity: 0; pointer-events: none;
+    opacity: 0; pointer-events: none;
     transition: opacity 0.2s ease;
 }
 .custom-modal-overlay.active { opacity: 1; pointer-events: auto; }
@@ -864,4 +864,74 @@ input[type="datetime-local"]::-webkit-datetime-edit-hour-field,
 input[type="datetime-local"]::-webkit-datetime-edit-minute-field,
 input[type="datetime-local"]::-webkit-datetime-edit-ampm-field {
     color: var(--accent-glow);
+}
+
+
+/* Settlement tab styling */
+.settlement-tab-btn {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 12px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    transition: all 0.2s ease;
+    border-bottom: 2px solid transparent;
+}
+
+.settlement-tab-btn.active {
+    color: var(--accent-glow);
+    border-bottom-color: var(--accent-glow);
+}
+
+.settlement-form-content {
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Transfer preview styling */
+.transfer-flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 16px;
+    background: rgba(96, 165, 250, 0.05);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+    border-radius: 8px;
+}
+
+.transfer-entity {
+    flex: 1;
+    text-align: center;
+    padding: 12px;
+    background: var(--bg-deep);
+    border-radius: 6px;
+    border: 1px solid var(--border-line);
+}
+
+.transfer-entity-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+}
+
+.transfer-entity-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-pure);
+}
+
+.transfer-arrow {
+    color: var(--accent-glow);
+    font-size: 20px;
+    flex-shrink: 0;
 }
