@@ -20,14 +20,11 @@ const CURRENCY_SYMBOLS = {
     THB: "฿"
 };
 
-const SYSTEM_PERSON = "System"; // Reserved person for handling remainders
-
 let globalCachedData = {
     expenses: [],
     categories: [],
     currency: "INR",
     budget: null,
-    preAllocationSettlements: []
 };
 let globalTripsList = [];
 let globalPeopleList = [];
@@ -168,6 +165,8 @@ function setDefaultDateTime() {
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
     const el = document.getElementById("expDateTime");
     if (el) el.value = now.toISOString().slice(0, 16);
+    const psdt = document.getElementById("pasSettleDateTime");
+    if (psdt) psdt.value = now.toISOString().slice(0, 16);
 }
 
 // ── Load data helper ──────────────────────────────────────────────────────────
@@ -223,12 +222,6 @@ async function pullPeopleList() {
     if (!globalPeopleList.some(p => p.name === RESERVED)) {
         globalPeopleList.unshift({
             id: 0, name: RESERVED, is_active: 1
-        });
-    }
-    // Ensure System person exists for handling remainders
-    if (!globalPeopleList.some(p => p.name === SYSTEM_PERSON)) {
-        globalPeopleList.push({
-            id: -1, name: SYSTEM_PERSON, is_active: 1
         });
     }
     renderPeopleSelectors();
@@ -429,7 +422,6 @@ function renderPeopleSelectors() {
     const splitGrid        = document.getElementById("splitConsumersContainer");
     const settingsList     = document.getElementById("settingsPeopleManagementList");
     const settlePersonDrop = document.getElementById("pasPersonName");
-    const fundToDrop       = document.getElementById("pasFundFrom");
     const settleFromDrop   = document.getElementById("pasSettleFrom");
     const settleToDrop     = document.getElementById("pasSettleTo");
 
@@ -440,12 +432,11 @@ function renderPeopleSelectors() {
     splitGrid.innerHTML    = "";
     settingsList.innerHTML = "";
     if (settlePersonDrop) settlePersonDrop.innerHTML = "";
-    if (fundToDrop)       fundToDrop.innerHTML       = "";
     if (settleFromDrop)   settleFromDrop.innerHTML   = "";
     if (settleToDrop)     settleToDrop.innerHTML     = "";
 
-    const active  = globalPeopleList.filter(p => (p?.name === RESERVED || p?.is_active) && p?.name !== SYSTEM_PERSON);
-    const inactive = globalPeopleList.filter(p => p?.name !== RESERVED && p?.name !== SYSTEM_PERSON && !p?.is_active);
+    const active  = globalPeopleList.filter(p => (p?.name === RESERVED || p?.is_active));
+    const inactive = globalPeopleList.filter(p => p?.name !== RESERVED && !p?.is_active);
     const ordered = [
         { id:0, name:RESERVED, is_active:1 },
         ...active.filter(p => p.name !== RESERVED).sort((a,b) => a.name.localeCompare(b.name))
@@ -462,13 +453,6 @@ function renderPeopleSelectors() {
             const spo = document.createElement("option");
             spo.value = person.name; spo.textContent = person.name;
             settlePersonDrop.appendChild(spo);
-        }
-
-        // ── fundToDrop ────────────────────────────────────────────────────
-        if (fundToDrop) {
-            const fo = document.createElement("option");
-            fo.value = person.name; fo.textContent = person.name;
-            fundToDrop.appendChild(fo);
         }
 
         // ── settleFromDrop ────────────────────────────────────────────────
@@ -710,44 +694,18 @@ function renderLogsAndAnalytics() {
         }
     });
 
-    // Build a separate fund ledger: how much each person pre-funded into the system pool
-    // net[person] = totalPrefunded - theirShareOfExpenses
-    // Positive net  → system owes them
-    // Negative net  → they owe the system
-    const prefunded = {};   // amount each person put INTO the system pool
-    const settled   = {};   // person-to-person settlements (settle_up type)
-
+    // Apply person-to-person settlements to balance sheet
+    const settled = {};
     (globalCachedData?.preAllocationSettlements || []).forEach(entry => {
-        const person = entry.from_person;
-        const amount = parseFloat(entry.amount || 0);
-
-        if (entry.type === "pre_allocation") {
-            // Person pre-funded the shared pool
-            if (!(person in prefunded)) prefunded[person] = 0;
-            prefunded[person] += amount;
-        } else if (entry.type === "settle_up") {
-            // Direct person-to-person settlement (not pool-based)
+        if (entry.type === "settle_up") {
+            const person = entry.from_person;
             const to = entry.to_person;
+            const amount = parseFloat(entry.amount || 0);
             if (!(person in settled)) settled[person] = 0;
             if (!(to    in settled)) settled[to]    = 0;
-            settled[person] += amount; 
+            settled[person] += amount;
             settled[to]     -= amount;
         }
-    });
-
-    // Reset balanceSheet to a clean net calculation:
-    // Start from expense-based balances (already computed above),
-    // then layer in prefunding and settlements.
-    //
-    // After the expense loop above:
-    //   balanceSheet[payer]    += amt   (positive = funded more than consumed)
-    //   balanceSheet[consumer] -= share (negative = consumed but hasn't paid)
-    //
-    // Pre-funding means the person gave money to the group pool,
-    // so add it to their balance (they are owed more back).
-    Object.entries(prefunded).forEach(([person, amount]) => {
-        if (!(person in balanceSheet)) balanceSheet[person] = 0;
-        balanceSheet[person] += amount;
     });
 
     // Apply person-to-person settlements
@@ -755,13 +713,6 @@ function renderLogsAndAnalytics() {
         if (!(person in balanceSheet)) balanceSheet[person] = 0;
         balanceSheet[person] += delta;
     });
-
-    // Any net surplus across all people flows through the System account.
-    // System balance = -(sum of all other balances), ensuring the ledger zeroes out.
-    const peopleNetSum = Object.entries(balanceSheet)
-        .filter(([name]) => name !== SYSTEM_PERSON)
-        .reduce((sum, [, bal]) => sum + bal, 0);
-    balanceSheet[SYSTEM_PERSON] = -peopleNetSum;
 
     historyList.querySelectorAll(".del-exp-btn").forEach(el =>
         el.addEventListener("click", () => deleteExpenseEntry(parseInt(el.dataset.id)))
@@ -779,16 +730,12 @@ function renderLogsAndAnalytics() {
         let debtors = [],
         creditors = [];
 
-        // Separate System person from normal people
-        const systemBalance = balanceSheet[SYSTEM_PERSON] || 0;
-
         Object.entries(balanceSheet).forEach(([name, bal]) => {
-            if (name === SYSTEM_PERSON) return; // handled separately below
             if (bal < -0.01) debtors.push({ name, balance: Math.abs(bal) });
             else if (bal > 0.01) creditors.push({ name, balance: bal });
         });
 
-        // Person-to-person debt settlement (excluding System)
+        // Person-to-person debt settlement
         const dCopy = debtors.map(x => ({ ...x }));
         const cCopy = creditors.map(x => ({ ...x }));
         let d = 0, c = 0;
@@ -804,38 +751,8 @@ function renderLogsAndAnalytics() {
             if (cCopy[c].balance <= 0.01) c++;
         }
 
-        // System settlement rows
-        // systemBalance < 0 → system owes people (they over-funded)
-        // systemBalance > 0 → people owe system (they under-funded)
-        if (Math.abs(systemBalance) > 0.01) {
-            let remaining = systemBalance;
-            if (systemBalance < -0.01) {
-                // System owes back to people who have positive balance (over-funded)
-                creditors.forEach(creditor => {
-                    const settle = Math.min(Math.abs(remaining), creditor.balance);
-                    if (settle < 0.01) return;
-                    remaining += settle;
-                    const row = document.createElement("div");
-                    row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-line)";
-                    row.innerHTML = `<span><span class="ui-icon icon-arrow-right" style="color:var(--accent-glow);width:14px;height:14px"></span> <b>${escapeHtml(SYSTEM_PERSON)}</b> owes <b>${escapeHtml(creditor.name)}</b></span><span style="color:var(--accent-glow);font-weight:600">${fmt(settle)}</span>`;
-                    debtsList.appendChild(row);
-                });
-            } else {
-                // People owe the system (under-funded relative to their spend)
-                debtors.forEach(debtor => {
-                    const settle = Math.min(remaining, debtor.balance);
-                    if (settle < 0.01) return;
-                    remaining -= settle;
-                    const row = document.createElement("div");
-                    row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-line)";
-                    row.innerHTML = `<span><span class="ui-icon icon-arrow-right" style="color:var(--danger-muted);width:14px;height:14px"></span> <b>${escapeHtml(debtor.name)}</b> owes <b>${escapeHtml(SYSTEM_PERSON)}</b></span><span style="color:var(--danger-muted);font-weight:600">${fmt(settle)}</span>`;
-                    debtsList.appendChild(row);
-                });
-            }
-        }
-
         if (!debtsList.children.length) debtsList.innerHTML = `<p style="color:var(--success-glow);text-align:center;font-size:12px;margin:4px 0">🎉 All squared up!</p>`;
-        if (groupCard) groupCard.style.display = globalPeopleList.filter(p => p.name !== SYSTEM_PERSON).length > 0 ? "block": "none";
+        if (groupCard) groupCard.style.display = globalPeopleList.length > 0 ? "block": "none";
     }
 
     // Analytics
@@ -927,95 +844,47 @@ function renderLogsAndAnalytics() {
     renderPreAllocSettlementLog();
 }
 
-// ── Render pre-allocation & settlement log ──────────────────────────────────
+// ── Render settlement log ──────────────────────────────────────────────────
 function renderPreAllocSettlementLog() {
     const container = document.getElementById("preAllocSettleList");
     const card = document.getElementById("preAllocSettleCard");
     if (!container || !card) return;
 
-    const entries = globalCachedData?.preAllocationSettlements || [];
+    const entries = (globalCachedData?.preAllocationSettlements || []).filter(e => e.type === "settle_up");
     container.innerHTML = "";
     card.style.display = entries.length ? "block": "none";
 
     if (!entries.length) return;
 
-    // Group by type for better organization
-    const advances = entries.filter(e => e.type === "pre_allocation");
-    const settlements = entries.filter(e => e.type === "settle_up");
+    entries.forEach(entry => {
+        const dateObj = new Date(entry.timestamp);
+        const dispTime = isNaN(dateObj) ? "N/A": `${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([], {
+            hour: "2-digit", minute: "2-digit"
+        })}`;
 
-    // Render Fund Advances
-    if (advances.length) {
-        const advanceSection = document.createElement("div");
-        advanceSection.innerHTML = '<div style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px;margin-top:12px">Fund Advances</div>';
-
-        advances.forEach(entry => {
-            const dateObj = new Date(entry.timestamp);
-            const dispTime = isNaN(dateObj) ? "N/A": `${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([], {
-                hour: "2-digit", minute: "2-digit"
-            })}`;
-
-            const div = document.createElement("div");
-            div.className = "log-item";
-            div.innerHTML = `
-            <div style="flex:1;min-width:0">
-            <div style="font-weight:500;font-size:14px;display:flex;align-items:center;gap:8px;margin-bottom:4px">
-            <span style="background:rgba(59,130,246,0.1);color:var(--accent-glow);border:1px solid var(--accent-glow);padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600">Fund Advance</span>
-            <span>${escapeHtml(entry.from_person)}</span>
-            <span style="color:var(--accent-glow)">→</span>
-            <span style="background:rgba(245,158,11,0.1);color:var(--warning-color);padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">System</span>
-            </div>
-            <div class="log-meta" style="margin-bottom:4px">
-            <span>${dispTime}</span>
-            ${entry.notes ? `&middot; <span style="color:var(--text-dim);font-style:italic">${escapeHtml(entry.notes)}</span>`: ""}
-            </div>
-            </div>
-            <div style="text-align:right;flex-shrink:0;margin-left:8px">
-            <div style="font-weight:600;color:var(--accent-glow);font-size:14px;margin-bottom:4px">${fmt(entry.amount)}</div>
-            <div style="display:flex;gap:8px;justify-content:flex-end">
-            <span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-settlement-btn" data-id="${entry.id}">Delete</span>
-            </div>
-            </div>`;
-            advanceSection.appendChild(div);
-        });
-        container.appendChild(advanceSection);
-    }
-
-    // Render Settlements
-    if (settlements.length) {
-        const settleSection = document.createElement("div");
-        settleSection.innerHTML = '<div style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px;margin-top:16px">Settlements</div>';
-
-        settlements.forEach(entry => {
-            const dateObj = new Date(entry.timestamp);
-            const dispTime = isNaN(dateObj) ? "N/A": `${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([], {
-                hour: "2-digit", minute: "2-digit"
-            })}`;
-
-            const div = document.createElement("div");
-            div.className = "log-item";
-            div.innerHTML = `
-            <div style="flex:1;min-width:0">
-            <div style="font-weight:500;font-size:14px;display:flex;align-items:center;gap:8px;margin-bottom:4px">
-            <span style="background:rgba(16,185,129,0.1);color:var(--success-glow);border:1px solid var(--success-glow);padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600">Settlement</span>
-            <span>${escapeHtml(entry.from_person)}</span>
-            <span style="color:var(--success-glow)">→</span>
-            <span>${escapeHtml(entry.to_person)}</span>
-            </div>
-            <div class="log-meta" style="margin-bottom:4px">
-            <span>${dispTime}</span>
-            ${entry.notes ? `&middot; <span style="color:var(--text-dim);font-style:italic">${escapeHtml(entry.notes)}</span>`: ""}
-            </div>
-            </div>
-            <div style="text-align:right;flex-shrink:0;margin-left:8px">
-            <div style="font-weight:600;color:var(--success-glow);font-size:14px;margin-bottom:4px">${fmt(entry.amount)}</div>
-            <div style="display:flex;gap:8px;justify-content:flex-end">
-            <span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-settlement-btn" data-id="${entry.id}">Delete</span>
-            </div>
-            </div>`;
-            settleSection.appendChild(div);
-        });
-        container.appendChild(settleSection);
-    }
+        const div = document.createElement("div");
+        div.className = "log-item";
+        div.innerHTML = `
+        <div style="flex:1;min-width:0">
+        <div style="font-weight:500;font-size:14px;display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="background:rgba(16,185,129,0.1);color:var(--success-glow);border:1px solid var(--success-glow);padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600">Settlement</span>
+        <span>${escapeHtml(entry.from_person)}</span>
+        <span style="color:var(--success-glow)">→</span>
+        <span>${escapeHtml(entry.to_person)}</span>
+        </div>
+        <div class="log-meta" style="margin-bottom:4px">
+        <span>${dispTime}</span>
+        ${entry.notes ? `&middot; <span style="color:var(--text-dim);font-style:italic">${escapeHtml(entry.notes)}</span>`: ""}
+        </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:8px">
+        <div style="font-weight:600;color:var(--success-glow);font-size:14px;margin-bottom:4px">${fmt(entry.amount)}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+        <span style="color:var(--danger-muted);font-size:11px;cursor:pointer" class="del-settlement-btn" data-id="${entry.id}">Delete</span>
+        </div>
+        </div>`;
+        container.appendChild(div);
+    });
 
     // Add event listeners
     container.querySelectorAll(".del-settlement-btn").forEach(el =>
@@ -1023,33 +892,9 @@ function renderPreAllocSettlementLog() {
     );
 }
 
-function switchSettlementTab(type) {
-    // Update tab styling
-    document.querySelectorAll('.settlement-tab-btn').forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.dataset.type === type) btn.classList.add('active');
-    });
 
-    // Update form visibility
-    document.querySelectorAll('.settlement-form-content').forEach(form => {
-        form.style.display = 'none';
-    });
-
-    const formId = type === 'pre_allocation' ? 'preAllocSettleForm-fund': 'preAllocSettleForm-settlement';
-    document.getElementById(formId).style.display = 'block';
-}
-
-// ── Refresh settlement/fund-advance previews after dropdown repopulation ──────
+// ── Refresh settlement preview after dropdown repopulation ──────────────────
 function _refreshSettlementPreviews() {
-    // Fund advance: show current person → System
-    const fundSel = document.getElementById("pasFundFrom");
-    const fundPreview = document.getElementById("pasFundPreview");
-    const fundFrom = document.getElementById("pasFundFromPreview");
-    if (fundSel && fundPreview && fundFrom && fundSel.value) {
-        fundPreview.style.display = 'flex';
-        fundFrom.textContent = fundSel.options[fundSel.selectedIndex].text;
-    }
-
     // Settlement: show current from → to
     const fromSel = document.getElementById("pasSettleFrom");
     const toSel   = document.getElementById("pasSettleTo");
@@ -1066,73 +911,10 @@ function _refreshSettlementPreviews() {
 // ── Pre-allocation & Settlement form ────────────────────────────────────────
 function setupPreAllocSettleForm() {
     // Set current date/time
-    const fundDateTime = document.getElementById("pasFundDateTime");
     const settleDateTime = document.getElementById("pasSettleDateTime");
-    if (fundDateTime && !fundDateTime.value) {
-        const now = new Date();
-        fundDateTime.value = now.toISOString().slice(0, 16);
-    }
     if (settleDateTime && !settleDateTime.value) {
         const now = new Date();
         settleDateTime.value = now.toISOString().slice(0, 16);
-    }
-
-    // FUND ADVANCE FORM
-    const fundForm = document.getElementById("preAllocSettleForm-fund");
-    if (fundForm) {
-        // Helper: sync fund advance preview from current dropdown value
-        const updateFundPreview = () => {
-            const sel = document.getElementById("pasFundFrom");
-            const preview = document.getElementById("pasFundPreview");
-            const previewFrom = document.getElementById("pasFundFromPreview");
-            if (!sel || !preview || !previewFrom) return;
-            if (sel.value) {
-                preview.style.display = 'flex';
-                previewFrom.textContent = sel.options[sel.selectedIndex].text;
-            } else {
-                preview.style.display = 'none';
-            }
-        };
-
-        // Update preview whenever selection changes (via custom drawer)
-        document.getElementById("pasFundFrom")?.addEventListener("change", updateFundPreview);
-
-        // Also initialise immediately so the default selection is reflected
-        updateFundPreview();
-
-        fundForm.addEventListener("submit",
-            async (e) => {
-                e.preventDefault();
-                const from_person = document.getElementById("pasFundFrom").value;
-                const amount = parseFloat(document.getElementById("pasFundAmount").value);
-                const timestamp = document.getElementById("pasFundDateTime").value;
-                const notes = document.getElementById("pasFundNotes").value.trim() || null;
-
-                if (!validName(from_person)) {
-                    showToast("Select a person.", "error"); return;
-                }
-                if (amount <= 0) {
-                    showToast("Enter a valid amount.", "error"); return;
-                }
-
-                const result = await apiFetch("/api/pre-allocation-settlement/add", {
-                    to_person: "System", // Always "System" for fund advances
-                    from_person: from_person,
-                    type: "pre_allocation",
-                    amount: amount,
-                    timestamp: timestamp,
-                    notes: notes,
-                    trip_id: currentTripId
-                });
-
-                if (result?.success) {
-                    showToast("Fund advance recorded!", "success");
-                    fundForm.reset();
-                    const now = new Date();
-                    fundDateTime.value = now.toISOString().slice(0, 16);
-                    loadData();
-                }
-            });
     }
 
     // SETTLEMENT FORM
@@ -1269,27 +1051,6 @@ function openEditExpenseModal(expId) {
     });
 
     modal.classList.add("active");
-}
-
-function initSettlementTabSwitching() {
-    const fundBtn = document.querySelector('[data-type="pre_allocation"]');
-    const settleBtn = document.querySelector('[data-type="settle_up"]');
-
-    if (fundBtn) {
-        fundBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            switchSettlementTab('pre_allocation');
-        });
-    }
-
-    if (settleBtn) {
-        settleBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            switchSettlementTab('settle_up');
-        });
-    }
 }
 
 // ── App engine ────────────────────────────────────────────────────────────
@@ -1573,7 +1334,6 @@ function initAppEngine() {
         });
 
     // ── Pre-allocation & Settlement form (setup once on page load) ──────────
-    initSettlementTabSwitching();
     setupPreAllocSettleForm();
 }
 
@@ -1732,8 +1492,6 @@ function setupCustomDropdownInterceptors() {
         "#editExpPaidBy",
         "#editExpCat",
         "#editExpSubCat",
-        "#pasType",
-        "#pasFundFrom",
         "#pasSettleFrom",
         "#pasSettleTo"].forEach(sel => {
             const el = document.querySelector(sel);

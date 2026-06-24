@@ -1,101 +1,138 @@
+#!/usr/bin/env python3
 """
-Migration v3 — Add from_person / to_person to pre_allocations_settlements
-==========================================================================
-Run once against an existing tracker.db that was created before this change.
+migrate_remove_prefunding.py
+────────────────────────────
+One-time migration: removes all prefunding (fund advance) data and
+tightens the DB schema now that the feature is held.
+
+What this does:
+  1. Deletes all pre_allocation rows from pre_allocations_settlements.
+  2. Removes 'System' person rows from trip_people (injected by old code).
+  3. Recreates pre_allocations_settlements with a clean schema:
+       - Drops legacy `person_name` column
+       - from_person / to_person are now NOT NULL
+       - CHECK constraint on `type` tightened to only 'settle_up'
+  4. Leaves all expenses, trips, categories, and settle_up rows untouched.
 
 Usage:
-    python migrate_v3.py [path/to/tracker.db]
+    python3 migrate_remove_prefunding.py [path/to/tracker.db]
 
-If no path is given, looks for tracker.db in the same directory as this script.
+Default DB path is ./tracker.db (same directory as the script).
 """
 
 import os
 import sys
+import shutil
 import sqlite3
-import logging
+from datetime import datetime
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("migrate_v3")
+DB_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "tracker.db")
 
+if not os.path.exists(DB_PATH):
+    print(f"[ERROR] DB not found: {DB_PATH}")
+    sys.exit(1)
 
-def run_migration(db_path: str) -> None:
-    if not os.path.exists(db_path):
-        log.error("Database not found: %s", db_path)
-        sys.exit(1)
+# ── Backup first ──────────────────────────────────────────────────────────────
+ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
+backup = DB_PATH + f".backup_{ts}"
+shutil.copy2(DB_PATH, backup)
+print(f"[backup]  {backup}")
 
-    log.info("Opening database: %s", db_path)
-    con = sqlite3.connect(db_path)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
+# ── Migrate ───────────────────────────────────────────────────────────────────
+con = sqlite3.connect(DB_PATH)
+con.execute("PRAGMA journal_mode=WAL")
+con.execute("PRAGMA foreign_keys=OFF")   # off during table recreation
+
+try:
+    c = con.cursor()
+
+    # ── 1. Delete all pre_allocation rows ─────────────────────────────────────
+    c.execute("SELECT COUNT(*) FROM pre_allocations_settlements WHERE type='pre_allocation'")
+    n_pre = c.fetchone()[0]
+    c.execute("DELETE FROM pre_allocations_settlements WHERE type='pre_allocation'")
+    print(f"[deleted] {n_pre} pre_allocation row(s)")
+
+    # ── 2. Remove 'System' person rows injected by old JS ─────────────────────
+    c.execute("SELECT COUNT(*) FROM trip_people WHERE name='System'")
+    n_sys = c.fetchone()[0]
+    c.execute("DELETE FROM trip_people WHERE name='System'")
+    print(f"[deleted] {n_sys} 'System' trip_people row(s)")
+
+    # ── 3. Recreate pre_allocations_settlements with clean schema ─────────────
+    #
+    # Old schema had:
+    #   person_name TEXT NOT NULL   ← legacy alias for from_person, now redundant
+    #   type CHECK IN ('pre_allocation','settle_up')
+    #   from_person / to_person nullable
+    #
+    # New schema:
+    #   person_name removed
+    #   type CHECK IN ('settle_up') only
+    #   from_person / to_person NOT NULL
+
+    c.execute("""
+        CREATE TABLE pre_allocations_settlements_new (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id     INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            amount      REAL    NOT NULL CHECK(amount > 0 AND amount <= 10000000),
+            type        TEXT    NOT NULL CHECK(type IN ('settle_up')),
+            timestamp   TEXT    NOT NULL,
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            notes       TEXT    DEFAULT NULL CHECK(length(notes) <= 255),
+            from_person TEXT    NOT NULL CHECK(length(from_person) <= 80),
+            to_person   TEXT    NOT NULL CHECK(length(to_person)   <= 80)
+        )
+    """)
+
+    # Copy surviving settle_up rows (from_person / to_person must be non-null;
+    # any edge-case rows missing them are skipped with a warning)
+    c.execute("""
+        INSERT INTO pre_allocations_settlements_new
+               (id, trip_id, amount, type, timestamp, created_at, notes, from_person, to_person)
+        SELECT  id, trip_id, amount, type, timestamp, created_at, notes,
+                COALESCE(from_person, person_name),   -- fall back for very old rows
+                to_person
+        FROM pre_allocations_settlements
+        WHERE type = 'settle_up'
+          AND to_person IS NOT NULL
+          AND COALESCE(from_person, person_name) IS NOT NULL
+    """)
+
+    c.execute("SELECT COUNT(*) FROM pre_allocations_settlements_new")
+    n_kept = c.fetchone()[0]
+
+    # Check for any rows that couldn't be migrated
+    c.execute("""
+        SELECT COUNT(*) FROM pre_allocations_settlements
+        WHERE type = 'settle_up'
+          AND (to_person IS NULL OR COALESCE(from_person, person_name) IS NULL)
+    """)
+    n_skipped = c.fetchone()[0]
+    if n_skipped:
+        print(f"[warning] {n_skipped} settle_up row(s) had NULL from/to and were SKIPPED")
+
+    c.execute("DROP TABLE pre_allocations_settlements")
+    c.execute("ALTER TABLE pre_allocations_settlements_new RENAME TO pre_allocations_settlements")
+
+    # Recreate the index
+    c.execute("""
+        CREATE INDEX IF NOT EXISTS idx_pas_trip_id
+        ON pre_allocations_settlements(trip_id)
+    """)
+
+    print(f"[kept]    {n_kept} settle_up row(s) migrated to clean schema")
+
+    con.commit()
+    print("[done]    Migration complete. Original DB backed up at:")
+    print(f"          {backup}")
+
+except Exception as e:
+    con.rollback()
+    print(f"[ERROR]   Migration failed, rolled back. Reason: {e}")
+    print(f"          Your original DB is untouched (backup also at {backup})")
+    sys.exit(1)
+
+finally:
     con.execute("PRAGMA foreign_keys=ON")
-
-    with con:
-        cur = con.cursor()
-
-        # 1. Check the table exists at all
-        cur.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name='pre_allocations_settlements'
-        """)
-        if not cur.fetchone():
-            log.warning("Table pre_allocations_settlements does not exist — nothing to migrate.")
-            return
-
-        # 2. Introspect existing columns
-        cur.execute("PRAGMA table_info(pre_allocations_settlements)")
-        existing_cols = {row["name"] for row in cur.fetchall()}
-        log.info("Existing columns: %s", sorted(existing_cols))
-
-        # 3. Add from_person if missing
-        if "from_person" not in existing_cols:
-            log.info("Adding column: from_person")
-            con.execute("""
-                ALTER TABLE pre_allocations_settlements
-                ADD COLUMN from_person TEXT DEFAULT NULL
-                CHECK(from_person IS NULL OR length(from_person) <= 80)
-            """)
-        else:
-            log.info("Column from_person already exists — skipping.")
-
-        # 4. Add to_person if missing
-        if "to_person" not in existing_cols:
-            log.info("Adding column: to_person")
-            con.execute("""
-                ALTER TABLE pre_allocations_settlements
-                ADD COLUMN to_person TEXT DEFAULT NULL
-                CHECK(to_person IS NULL OR length(to_person) <= 80)
-            """)
-        else:
-            log.info("Column to_person already exists — skipping.")
-
-        # 5. Back-fill legacy rows:
-        #    person_name was the "from" side in all historical records.
-        result = con.execute("""
-            UPDATE pre_allocations_settlements
-               SET from_person = person_name
-             WHERE from_person IS NULL
-        """)
-        log.info("Back-filled from_person for %d row(s).", result.rowcount)
-
-        # 6. Verify
-        cur.execute("SELECT COUNT(*) as total FROM pre_allocations_settlements")
-        total = cur.fetchone()["total"]
-        cur.execute("""
-            SELECT COUNT(*) as missing
-              FROM pre_allocations_settlements
-             WHERE from_person IS NULL
-        """)
-        missing = cur.fetchone()["missing"]
-
-        if missing:
-            log.error("%d row(s) still have NULL from_person — investigate manually.", missing)
-            sys.exit(1)
-
-        log.info("Migration complete. %d total row(s), 0 with NULL from_person.", total)
-
-
-if __name__ == "__main__":
-    base = os.path.dirname(os.path.abspath(__file__))
-    db_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(base, "tracker.db")
-    run_migration(db_path)
+    con.close()
 

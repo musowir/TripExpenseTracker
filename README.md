@@ -9,7 +9,6 @@ A mobile-first group expense tracking web app for trips. Log shared costs, split
 - **Multi-trip support** — create and switch between separate trips, each with its own members, currency, and budget
 - **Group expense splitting** — log who paid and divide costs among any subset of trip members
 - **Settlement optimisation** — calculates the minimum number of transfers to settle debts within the group
-- **Fund advances** — record upfront payments from a member to the shared pool before the trip
 - **Budget tracking** — set a trip budget and watch a live progress bar as you spend
 - **Analytics** — daily spend breakdown, category metrics, and per-person totals
 - **Custom categories** — add or remove main categories and sub-categories
@@ -34,17 +33,18 @@ A mobile-first group expense tracking web app for trips. Log shared costs, split
 
 ```
 .
-├── index.html          # Single-page app shell (all views)
-├── server.py           # Flask REST API + SQLite database layer
+├── index.html                      # Single-page app shell (all views)
+├── server.py                       # Flask REST API + SQLite database layer
+├── migrate.py    # One-time DB migration script
 ├── assets/
 │   ├── css/
-│   │   └── style.css   # All styles and theme variables
+│   │   └── style.css               # All styles and theme variables
 │   └── js/
-│       └── tracker.js  # Client-side logic, API calls, UI rendering
-├── manifest.json       # PWA manifest
-├── sw.js               # Service worker (offline support)
-├── icon.png            # App icon
-└── tracker.db          # SQLite database (auto-created on first run)
+│       └── tracker.js              # Client-side logic, API calls, UI rendering
+├── manifest.json                   # PWA manifest
+├── sw.js                           # Service worker (offline support)
+├── icon.png                        # App icon
+└── tracker.db                      # SQLite database (auto-created on first run)
 ```
 
 ---
@@ -60,8 +60,8 @@ A mobile-first group expense tracking web app for trips. Log shared costs, split
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/expense-tracker.git
-cd expense-tracker
+git clone https://github.com/musowir/TripExpenseTracker.git
+cd TripExpenseTracker
 
 # Install dependencies
 pip install flask
@@ -73,6 +73,16 @@ python server.py
 The app will be available at **http://127.0.0.1:5000**.
 
 The SQLite database (`tracker.db`) is created automatically on first launch, pre-seeded with a default trip and common expense categories.
+
+### Migrating an existing database
+
+If you have a `tracker.db` from a previous version (which may contain fund advance records), run the migration script once before starting the server:
+
+```bash
+python3 migrate.py path/to/tracker.db
+```
+
+This will remove all fund advance (`pre_allocation`) rows, clean up the virtual `System` person from trip members, and recreate the settlements table with the updated schema. A timestamped backup of the original DB is created automatically before any changes are made.
 
 ---
 
@@ -106,12 +116,12 @@ All endpoints are prefixed with `/api/`. Write operations use `POST` with a JSON
 | POST | `/api/expense/edit` | Update an existing expense |
 | POST | `/api/expense/delete` | Delete an expense |
 
-### Settlements & Fund Advances
+### Settlements
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/pre-allocation-settlement/add` | Record a fund advance or settlement |
-| POST | `/api/pre-allocation-settlement/delete` | Remove a record |
+| POST | `/api/pre-allocation-settlement/add` | Record a settlement between two members |
+| POST | `/api/pre-allocation-settlement/delete` | Remove a settlement record |
 
 ### Categories
 

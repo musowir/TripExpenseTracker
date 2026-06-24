@@ -192,37 +192,19 @@ def init_db():
         except sqlite3.OperationalError:
             pass
         
-        # Create pre-allocations and settlements table (v2 migration)
+        # Settlements table — settle_up entries only (prefunding removed)
         c.execute("""
             CREATE TABLE IF NOT EXISTS pre_allocations_settlements (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 trip_id     INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-                person_name TEXT NOT NULL CHECK(length(person_name) <= 80),
-                amount      REAL NOT NULL CHECK(amount > 0 AND amount <= 10000000),
-                type        TEXT NOT NULL CHECK(type IN ('pre_allocation', 'settle_up')),
-                timestamp   TEXT NOT NULL,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                notes       TEXT DEFAULT NULL CHECK(length(notes) <= 255),
-                from_person TEXT DEFAULT NULL CHECK(from_person IS NULL OR length(from_person) <= 80),
-                to_person   TEXT DEFAULT NULL CHECK(to_person IS NULL OR length(to_person) <= 80)
+                amount      REAL    NOT NULL CHECK(amount > 0 AND amount <= 10000000),
+                type        TEXT    NOT NULL CHECK(type IN ('settle_up')),
+                timestamp   TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                notes       TEXT    DEFAULT NULL CHECK(length(notes) <= 255),
+                from_person TEXT    NOT NULL CHECK(length(from_person) <= 80),
+                to_person   TEXT    NOT NULL CHECK(length(to_person)   <= 80)
             )
-        """)
-
-        # v3 migration: add from_person / to_person columns if upgrading from older schema
-        for col, defn in [
-            ("from_person", "TEXT DEFAULT NULL CHECK(from_person IS NULL OR length(from_person) <= 80)"),
-            ("to_person",   "TEXT DEFAULT NULL CHECK(to_person IS NULL OR length(to_person) <= 80)"),
-        ]:
-            try:
-                conn.execute(f"ALTER TABLE pre_allocations_settlements ADD COLUMN {col} {defn}")
-            except sqlite3.OperationalError:
-                pass  # column already exists
-
-        # Back-fill legacy rows: person_name was the "from" side for both types
-        conn.execute("""
-            UPDATE pre_allocations_settlements
-               SET from_person = person_name
-             WHERE from_person IS NULL
         """)
 
         try:
@@ -454,9 +436,9 @@ def get_data():
         currency = trip_row["currency"] if trip_row else "INR"
         budget   = trip_row["budget"]   if trip_row else None
         
-        # Fetch pre-allocations and settlements
+        # Fetch settlements
         prealloc_rows = db.execute(
-            "SELECT id, person_name, amount, type, timestamp, notes, from_person, to_person "
+            "SELECT id, amount, type, timestamp, notes, from_person, to_person "
             "FROM pre_allocations_settlements WHERE trip_id=? ORDER BY timestamp DESC",
             (trip_id,)
         ).fetchall()
@@ -466,7 +448,7 @@ def get_data():
             "FROM expenses ORDER BY timestamp DESC"
         ).fetchall()
         prealloc_rows = db.execute(
-            "SELECT id, person_name, amount, type, timestamp, notes, from_person, to_person "
+            "SELECT id, amount, type, timestamp, notes, from_person, to_person "
             "FROM pre_allocations_settlements ORDER BY timestamp DESC"
         ).fetchall()
         currency = "INR"
@@ -484,12 +466,11 @@ def get_data():
             "split_with": [s["person_name"] for s in splits],
         })
 
-    # Format pre-allocations and settlements
+    # Format settlements
     prealloc_settlements = [
         {
             "id":          r["id"],
-            "person_name": r["person_name"],
-            "from_person": r["from_person"] or r["person_name"],  # fall back to person_name for legacy rows
+            "from_person": r["from_person"],
             "to_person":   r["to_person"],
             "amount":      r["amount"],
             "type":        r["type"],
@@ -618,15 +599,14 @@ def add_pre_alloc_settlement():
     timestamp   = str(data.get("timestamp", "")).strip()
     notes       = str(data.get("notes", "")).strip() if data.get("notes") else None
 
-    # Support both old-style (personName) and new-style (from_person / to_person)
-    from_person = str(data.get("from_person", data.get("personName", ""))).strip()
+    from_person = str(data.get("from_person", "")).strip()
     to_person   = str(data.get("to_person",   "")).strip() or None
 
     # Validation
     if not valid_id(trip_id):
         return jsonify({"error": "Invalid trip_id."}), 400
-    if entry_type not in ("pre_allocation", "settle_up"):
-        return jsonify({"error": "Type must be 'pre_allocation' or 'settle_up'."}), 400
+    if entry_type not in ("settle_up",):
+        return jsonify({"error": "Type must be 'settle_up'."}), 400
     if not valid_amount(amount):
         return jsonify({"error": "Invalid amount."}), 400
     if not valid_timestamp(timestamp):
@@ -636,15 +616,11 @@ def add_pre_alloc_settlement():
     if not from_person or not valid_name(from_person):
         return jsonify({"error": "Invalid from_person."}), 400
 
-    # to_person is optional for pre_allocation but required for settle_up
-    if entry_type == "settle_up":
-        if not to_person or not valid_name(to_person):
-            return jsonify({"error": "Invalid to_person for settlement."}), 400
-        if from_person == to_person:
-            return jsonify({"error": "from_person and to_person must differ."}), 400
-
-    # person_name = the primary person involved (from_person for both types)
-    person_name = from_person
+    # to_person is required for settle_up
+    if not to_person or not valid_name(to_person):
+        return jsonify({"error": "Invalid to_person."}), 400
+    if from_person == to_person:
+        return jsonify({"error": "from_person and to_person must differ."}), 400
 
     db = get_db()
 
@@ -653,17 +629,8 @@ def add_pre_alloc_settlement():
     if not trip_row:
         return jsonify({"error": "Trip not found."}), 404
 
-    # For settle_up: verify both participants exist in the trip.
-    # "System" is a virtual person — skip DB check for it.
-    VIRTUAL = {"System"}
-
-    people_to_check = [from_person]
-    if to_person and to_person not in VIRTUAL:
-        people_to_check.append(to_person)
-
-    for name in people_to_check:
-        if name in VIRTUAL:
-            continue
+    # Verify both participants exist in the trip
+    for name in [from_person, to_person]:
         person = db.execute(
             "SELECT id FROM trip_people WHERE trip_id=? AND name=?",
             (int(trip_id), name)
@@ -674,9 +641,9 @@ def add_pre_alloc_settlement():
     try:
         db.execute(
             """INSERT INTO pre_allocations_settlements
-               (trip_id, person_name, amount, type, timestamp, notes, from_person, to_person)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (int(trip_id), person_name, float(amount), entry_type,
+               (trip_id, amount, type, timestamp, notes, from_person, to_person)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (int(trip_id), float(amount), entry_type,
              timestamp, notes, from_person, to_person)
         )
         db.commit()
