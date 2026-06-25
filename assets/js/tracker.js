@@ -47,10 +47,10 @@ function _saveTripId(id) {
 // Returns true by default (null = never set = cap ON)
 function isSettleCapEnabled() {
     const val = localStorage.getItem(LS_SETTLE_CAP_KEY);
-    return val === null ? true : val === "true";
+    return val === null ? true: val === "true";
 }
 function setSettleCap(val) {
-    localStorage.setItem(LS_SETTLE_CAP_KEY, val ? "true" : "false");
+    localStorage.setItem(LS_SETTLE_CAP_KEY, val ? "true": "false");
 }
 
 // ── Currency helper ───────────────────────────────────────────────────────
@@ -390,8 +390,8 @@ function renderTripDashboard() {
         <div style="height:100%;width:${budPct}%;background:${budPct >= 100 ? "var(--danger-muted)": "var(--accent-glow)"};border-radius:3px"></div>
         </div>`: `<div style="font-size:10px;color:var(--text-dim)">No budget set</div>`}
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-            ${!isActive ? `<span style="font-size:11px;color:var(--accent-glow);cursor:pointer" data-switch="${trip.id}">Switch →</span>`: `<div></div>`}
-            <span style="color:var(--danger-muted);font-size:11px;cursor:pointer;font-weight:500" class="trip-del-btn" data-id="${trip.id}">Delete</span>
+        ${!isActive ? `<span style="font-size:11px;color:var(--accent-glow);cursor:pointer" data-switch="${trip.id}">Switch →</span>`: `<div></div>`}
+        <span style="color:var(--danger-muted);font-size:11px;cursor:pointer;font-weight:500" class="trip-del-btn" data-id="${trip.id}">Delete</span>
         </div>
         `;
         grid.appendChild(card);
@@ -445,28 +445,31 @@ function renderTripSelectors() {
 }
 
 function renderPeopleSelectors() {
-    const paidByDrop       = document.getElementById("expPaidBy");
-    const splitGrid        = document.getElementById("splitConsumersContainer");
-    const settingsList     = document.getElementById("settingsPeopleManagementList");
+    const paidByDrop = document.getElementById("expPaidBy");
+    const splitGrid = document.getElementById("splitConsumersContainer");
+    const settingsList = document.getElementById("settingsPeopleManagementList");
     const settlePersonDrop = document.getElementById("pasPersonName");
-    const settleFromDrop   = document.getElementById("pasSettleFrom");
-    const settleToDrop     = document.getElementById("pasSettleTo");
+    const settleFromDrop = document.getElementById("pasSettleFrom");
+    const settleToDrop = document.getElementById("pasSettleTo");
 
     // Only guard the essentials; settlement dropdowns may not exist on all views
     if (!paidByDrop || !splitGrid || !settingsList) return;
 
-    paidByDrop.innerHTML   = "";
-    splitGrid.innerHTML    = "";
+    paidByDrop.innerHTML = "";
+    splitGrid.innerHTML = "";
     settingsList.innerHTML = "";
     if (settlePersonDrop) settlePersonDrop.innerHTML = "";
-    if (settleFromDrop)   settleFromDrop.innerHTML   = "";
-    if (settleToDrop)     settleToDrop.innerHTML     = "";
+    if (settleFromDrop) settleFromDrop.innerHTML = "";
+    if (settleToDrop) settleToDrop.innerHTML = "";
 
-    const active  = globalPeopleList.filter(p => (p?.name === RESERVED || p?.is_active));
+    const active = globalPeopleList.filter(p => (p?.name === RESERVED || p?.is_active));
     const inactive = globalPeopleList.filter(p => p?.name !== RESERVED && !p?.is_active);
-    const ordered = [
-        { id:0, name:RESERVED, is_active:1 },
-        ...active.filter(p => p.name !== RESERVED).sort((a,b) => a.name.localeCompare(b.name))
+    const ordered = [{
+        id: 0,
+        name: RESERVED,
+        is_active: 1
+    },
+        ...active.filter(p => p.name !== RESERVED).sort((a, b) => a.name.localeCompare(b.name))
     ];
 
     ordered.forEach(person => {
@@ -729,9 +732,9 @@ function renderLogsAndAnalytics() {
             const to = entry.to_person;
             const amount = parseFloat(entry.amount || 0);
             if (!(person in settled)) settled[person] = 0;
-            if (!(to    in settled)) settled[to]    = 0;
+            if (!(to in settled)) settled[to] = 0;
             settled[person] += amount;
-            settled[to]     -= amount;
+            settled[to] -= amount;
         }
     });
 
@@ -758,13 +761,21 @@ function renderLogsAndAnalytics() {
         creditors = [];
 
         Object.entries(balanceSheet).forEach(([name, bal]) => {
-            if (bal < -0.01) debtors.push({ name, balance: Math.abs(bal) });
-            else if (bal > 0.01) creditors.push({ name, balance: bal });
+            if (bal < -0.01) debtors.push({
+                name, balance: Math.abs(bal)
+            });
+            else if (bal > 0.01) creditors.push({
+                name, balance: bal
+            });
         });
 
         // Person-to-person debt settlement
-        const dCopy = debtors.map(x => ({ ...x }));
-        const cCopy = creditors.map(x => ({ ...x }));
+        const dCopy = debtors.map(x => ({
+            ...x
+        }));
+        const cCopy = creditors.map(x => ({
+            ...x
+        }));
         let d = 0, c = 0;
         while (d < dCopy.length && c < cCopy.length) {
             const settle = Math.min(dCopy[d].balance, cCopy[c].balance);
@@ -924,14 +935,14 @@ function renderPreAllocSettlementLog() {
 function _refreshSettlementPreviews() {
     // Settlement: show current from → to
     const fromSel = document.getElementById("pasSettleFrom");
-    const toSel   = document.getElementById("pasSettleTo");
+    const toSel = document.getElementById("pasSettleTo");
     const settlePreview = document.getElementById("pasSettlePreview");
     const settleFrom = document.getElementById("pasSettleFromPreview");
-    const settleTo   = document.getElementById("pasSettleToPreview");
+    const settleTo = document.getElementById("pasSettleToPreview");
     if (fromSel && toSel && settlePreview && settleFrom && settleTo && fromSel.value && toSel.value) {
         settlePreview.style.display = 'flex';
         settleFrom.textContent = fromSel.options[fromSel.selectedIndex].text;
-        settleTo.textContent   = toSel.options[toSel.selectedIndex].text;
+        settleTo.textContent = toSel.options[toSel.selectedIndex].text;
     }
 }
 
@@ -951,11 +962,13 @@ function setupPreAllocSettleForm() {
         function _computeOwedAmount(fromPerson, toPerson) {
             if (!fromPerson || !toPerson || fromPerson === toPerson) return 0;
             const balanceSheet = {};
-            globalPeopleList.forEach(p => { if (p?.name) balanceSheet[p.name] = 0; });
+            globalPeopleList.forEach(p => {
+                if (p?.name) balanceSheet[p.name] = 0;
+            });
             (globalCachedData?.expenses || []).forEach(exp => {
                 const amt = parseFloat(exp.amount || 0);
                 const payer = exp.paid_by || "?";
-                const consumers = Array.isArray(exp.split_with) && exp.split_with.length ? exp.split_with : [RESERVED];
+                const consumers = Array.isArray(exp.split_with) && exp.split_with.length ? exp.split_with: [RESERVED];
                 const share = amt / consumers.length;
                 if (!(payer in balanceSheet)) balanceSheet[payer] = 0;
                 balanceSheet[payer] += amt;
@@ -970,16 +983,24 @@ function setupPreAllocSettleForm() {
                     if (!(entry.from_person in balanceSheet)) balanceSheet[entry.from_person] = 0;
                     if (!(entry.to_person in balanceSheet)) balanceSheet[entry.to_person] = 0;
                     balanceSheet[entry.from_person] += amt;
-                    balanceSheet[entry.to_person]   -= amt;
+                    balanceSheet[entry.to_person] -= amt;
                 }
             });
             let debtors = [], creditors = [];
             Object.entries(balanceSheet).forEach(([name, bal]) => {
-                if (bal < -0.01) debtors.push({ name, balance: Math.abs(bal) });
-                else if (bal > 0.01) creditors.push({ name, balance: bal });
+                if (bal < -0.01) debtors.push({
+                    name, balance: Math.abs(bal)
+                });
+                else if (bal > 0.01) creditors.push({
+                    name, balance: bal
+                });
             });
-            const dCopy = debtors.map(x => ({ ...x }));
-            const cCopy = creditors.map(x => ({ ...x }));
+            const dCopy = debtors.map(x => ({
+                ...x
+            }));
+            const cCopy = creditors.map(x => ({
+                ...x
+            }));
             let d = 0, c = 0;
             while (d < dCopy.length && c < cCopy.length) {
                 const settle = Math.min(dCopy[d].balance, cCopy[c].balance);
@@ -996,17 +1017,17 @@ function setupPreAllocSettleForm() {
 
         const updateSettlePreview = () => {
             const fromSel = document.getElementById("pasSettleFrom");
-            const toSel   = document.getElementById("pasSettleTo");
+            const toSel = document.getElementById("pasSettleTo");
             const preview = document.getElementById("pasSettlePreview");
             const previewFrom = document.getElementById("pasSettleFromPreview");
-            const previewTo   = document.getElementById("pasSettleToPreview");
+            const previewTo = document.getElementById("pasSettleToPreview");
             const amountInput = document.getElementById("pasSettleAmount");
             if (!fromSel || !toSel || !preview || !previewFrom || !previewTo) return;
 
             if (fromSel.value && toSel.value) {
                 preview.style.display = 'flex';
                 previewFrom.textContent = fromSel.options[fromSel.selectedIndex].text;
-                previewTo.textContent   = toSel.options[toSel.selectedIndex].text;
+                previewTo.textContent = toSel.options[toSel.selectedIndex].text;
 
                 const owed = _computeOwedAmount(fromSel.value, toSel.value);
                 if (amountInput) {
@@ -1033,7 +1054,7 @@ function setupPreAllocSettleForm() {
                         amountInput.value = "";
                         amountInput.removeAttribute("max");
                         hint.style.color = "var(--text-dim)";
-                        hint.textContent = fromSel.value === toSel.value ? "" : `${fromSel.options[fromSel.selectedIndex].text} doesn't owe ${toSel.options[toSel.selectedIndex].text} anything.`;
+                        hint.textContent = fromSel.value === toSel.value ? "": `${fromSel.options[fromSel.selectedIndex].text} doesn't owe ${toSel.options[toSel.selectedIndex].text} anything.`;
                     }
                 }
             } else {
@@ -1087,6 +1108,11 @@ function setupPreAllocSettleForm() {
             });
 
             if (result?.success) {
+                // Trigger celebration animation
+               if (typeof PartyFaceCelebration !== 'undefined') {
+                    PartyFaceCelebration.celebrateFull(); 
+                }
+                
                 showToast("Settlement recorded!", "success");
                 settleForm.reset();
                 const now = new Date();
@@ -1099,7 +1125,8 @@ function setupPreAllocSettleForm() {
 
 // ── Delete pre-allocation/settlement ────────────────────────────────────────
 async function deletePreAllocSettlement(id) {
-    const ok = await showCustomConfirm("Delete Settlement", "Remove this settlement entry?");
+    const ok = await showCustomConfirm("Delete Settlement",
+        "Remove this settlement entry?");
     if (!ok) return;
     const result = await apiFetch("/api/pre-allocation-settlement/delete", {
         id
@@ -1222,7 +1249,7 @@ function initAppEngine() {
         settleCapToggle.checked = isSettleCapEnabled();
         settleCapToggle.addEventListener("change", function () {
             setSettleCap(this.checked);
-            showToast(this.checked ? "Settlement cap enabled." : "Settlement cap disabled.", "info");
+            showToast(this.checked ? "Settlement cap enabled.": "Settlement cap disabled.", "info");
         });
     }
 
