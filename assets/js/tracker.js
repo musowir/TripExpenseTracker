@@ -2,6 +2,7 @@
 
 // ── Constants & state ─────────────────────────────────────────────────────
 const LS_TRIP_KEY = "exptracker_activeTripId_v1";
+const LS_SETTLE_CAP_KEY = "exptracker_settleCapEnabled_v1";
 const MAX_NAME = 80;
 const MAX_DESC = 255;
 const MAX_AMOUNT = 10_000_000;
@@ -41,6 +42,13 @@ function _saveTripId(id) {
     if (Number.isFinite(n) && n > 0) {
         currentTripId = n; localStorage.setItem(LS_TRIP_KEY, String(n));
     }
+}
+
+function isSettleCapEnabled() {
+    return localStorage.getItem(LS_SETTLE_CAP_KEY) === "true";
+}
+function setSettleCap(val) {
+    localStorage.setItem(LS_SETTLE_CAP_KEY, val ? "true" : "false");
 }
 
 // ── Currency helper ───────────────────────────────────────────────────────
@@ -942,7 +950,6 @@ function setupPreAllocSettleForm() {
         function _computeOwedAmount(fromPerson, toPerson) {
             if (!fromPerson || !toPerson || fromPerson === toPerson) return 0;
 
-            // Build balance sheet (same logic as renderLogsAndAnalytics)
             const balanceSheet = {};
             globalPeopleList.forEach(p => { if (p?.name) balanceSheet[p.name] = 0; });
 
@@ -959,7 +966,6 @@ function setupPreAllocSettleForm() {
                 });
             });
 
-            // Apply existing settlements
             (globalCachedData?.preAllocationSettlements || []).forEach(entry => {
                 if (entry.type === "settle_up") {
                     const amt = parseFloat(entry.amount || 0);
@@ -970,7 +976,6 @@ function setupPreAllocSettleForm() {
                 }
             });
 
-            // Run greedy debt-settlement to find how much fromPerson owes toPerson
             let debtors = [], creditors = [];
             Object.entries(balanceSheet).forEach(([name, bal]) => {
                 if (bal < -0.01) debtors.push({ name, balance: Math.abs(bal) });
@@ -990,10 +995,10 @@ function setupPreAllocSettleForm() {
                 if (dCopy[d].balance <= 0.01) d++;
                 if (cCopy[c].balance <= 0.01) c++;
             }
-            return 0; // fromPerson doesn't owe toPerson anything
+            return 0;
         }
 
-        // Update preview when persons selected, auto-fill amount, show max hint
+        // Update preview, auto-fill amount, show hint
         const updateSettlePreview = () => {
             const fromSel = document.getElementById("pasSettleFrom");
             const toSel   = document.getElementById("pasSettleTo");
@@ -1008,31 +1013,31 @@ function setupPreAllocSettleForm() {
                 previewFrom.textContent = fromSel.options[fromSel.selectedIndex].text;
                 previewTo.textContent   = toSel.options[toSel.selectedIndex].text;
 
-                // Auto-fill and cap amount
                 const owed = _computeOwedAmount(fromSel.value, toSel.value);
                 if (amountInput) {
+                    let hint = document.getElementById("_settleAmountHint");
+                    if (!hint) {
+                        hint = document.createElement("div");
+                        hint.id = "_settleAmountHint";
+                        hint.style.cssText = "font-size:11px;margin-top:4px";
+                        amountInput.parentNode.appendChild(hint);
+                    }
                     if (owed > 0) {
                         amountInput.value = owed.toFixed(2);
-                        amountInput.max = owed.toFixed(2);
-                        // Show hint below amount field
-                        let hint = document.getElementById("_settleAmountHint");
-                        if (!hint) {
-                            hint = document.createElement("div");
-                            hint.id = "_settleAmountHint";
-                            hint.style.cssText = "font-size:11px;color:var(--accent-glow);margin-top:4px";
-                            amountInput.parentNode.appendChild(hint);
+                        const cap = isSettleCapEnabled();
+                        if (cap) {
+                            amountInput.max = owed.toFixed(2);
+                            hint.style.color = "var(--accent-glow)";
+                            hint.textContent = `Max: ${fmt(owed)} (full amount owed)`;
+                        } else {
+                            amountInput.removeAttribute("max");
+                            hint.style.color = "var(--text-dim)";
+                            hint.textContent = `Suggested: ${fmt(owed)} (full amount owed)`;
                         }
-                        hint.textContent = `Max: ${fmt(owed)} (full amount owed)`;
                     } else {
                         amountInput.value = "";
                         amountInput.removeAttribute("max");
-                        let hint = document.getElementById("_settleAmountHint");
-                        if (!hint) {
-                            hint = document.createElement("div");
-                            hint.id = "_settleAmountHint";
-                            hint.style.cssText = "font-size:11px;color:var(--text-dim);margin-top:4px";
-                            amountInput.parentNode.appendChild(hint);
-                        }
+                        hint.style.color = "var(--text-dim)";
                         hint.textContent = fromSel.value === toSel.value ? "" : `${fromSel.options[fromSel.selectedIndex].text} doesn't owe ${toSel.options[toSel.selectedIndex].text} anything.`;
                     }
                 }
@@ -1043,8 +1048,6 @@ function setupPreAllocSettleForm() {
 
         document.getElementById("pasSettleFrom")?.addEventListener("change", updateSettlePreview);
         document.getElementById("pasSettleTo")?.addEventListener("change", updateSettlePreview);
-
-        // Initialise immediately with default dropdown values
         updateSettlePreview();
 
         settleForm.addEventListener("submit", async (e) => {
@@ -1068,13 +1071,15 @@ function setupPreAllocSettleForm() {
                 showToast("Enter a valid amount.", "error"); return;
             }
 
-            // Validate settlement doesn't exceed what's owed
-            const maxOwed = _computeOwedAmount(from_person, to_person);
-            if (maxOwed <= 0) {
-                showToast(`${from_person} doesn't owe ${to_person} anything.`, "error"); return;
-            }
-            if (amount > maxOwed + 0.005) {
-                showToast(`Can't settle more than ${fmt(maxOwed)} — that's all ${from_person} owes ${to_person}.`, "error"); return;
+            // Only enforce cap when the feature is enabled
+            if (isSettleCapEnabled()) {
+                const maxOwed = _computeOwedAmount(from_person, to_person);
+                if (maxOwed <= 0) {
+                    showToast(`${from_person} doesn't owe ${to_person} anything.`, "error"); return;
+                }
+                if (amount > maxOwed + 0.005) {
+                    showToast(`Can't settle more than ${fmt(maxOwed)} — that's all ${from_person} owes ${to_person}.`, "error"); return;
+                }
             }
 
             const result = await apiFetch("/api/pre-allocation-settlement/add", {
@@ -1215,6 +1220,16 @@ function initAppEngine() {
             }
         });
     });
+
+    // ── Settlement cap toggle ──────────────────────────────────────────────
+    const settleCapToggle = document.getElementById("settleCapToggle");
+    if (settleCapToggle) {
+        settleCapToggle.checked = isSettleCapEnabled();
+        settleCapToggle.addEventListener("change", function () {
+            setSettleCap(this.checked);
+            showToast(this.checked ? "Settlement cap enabled." : "Settlement cap disabled.", "info");
+        });
+    }
 
     // Category sub-dropdown chain
     document.getElementById("expCategory")?.addEventListener("change", function () {
