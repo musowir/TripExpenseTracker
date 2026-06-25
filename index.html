@@ -12,7 +12,52 @@
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
-    <div id="loader">Initializing workspace…</div>
+    <!-- Progress bar for fast API ops -->
+    <div id="loaderProgressBar"></div>
+
+    <!-- Full-screen receipt tape loader -->
+    <div id="loader">
+        <div class="loader-glow"></div>
+        <div class="loader-receipt">
+            <div class="loader-receipt-inner">
+                <div class="loader-scan-line"></div>
+
+                <!-- Stub rows — mimic receipt line items being scanned -->
+                <div class="loader-row">
+                    <div class="loader-stub" style="width:44px"></div>
+                    <div class="loader-val"  style="width:22px"></div>
+                </div>
+                <div class="loader-row">
+                    <div class="loader-stub" style="width:32px"></div>
+                    <div class="loader-val"  style="width:18px"></div>
+                </div>
+                <div class="loader-row">
+                    <div class="loader-stub" style="width:52px"></div>
+                    <div class="loader-val"  style="width:24px"></div>
+                </div>
+
+                <div class="loader-divider"></div>
+
+                <div class="loader-row">
+                    <div class="loader-stub" style="width:38px"></div>
+                    <div class="loader-val"  style="width:20px"></div>
+                </div>
+                <div class="loader-row">
+                    <div class="loader-stub" style="width:28px"></div>
+                    <div class="loader-val"  style="width:16px"></div>
+                </div>
+
+                <div class="loader-divider"></div>
+
+                <!-- Total row — brighter, pulsing -->
+                <div class="loader-row loader-total">
+                    <div class="loader-stub" style="width:30px"></div>
+                    <div class="loader-val"  style="width:30px"></div>
+                </div>
+            </div>
+        </div>
+        <div class="loader-label" id="loaderLabel">Fetching data<span>...</span></div>
+    </div>
 
     <!-- Hidden print container (printReportContainer itself is display:none via CSS until export) -->
     <div id="printReportContainer">

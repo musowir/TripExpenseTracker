@@ -15,6 +15,315 @@
     --nav-bottom-h: 68px;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   RECEIPT TAPE LOADER — Full-screen overlay with scanning animation
+   Shows on initial load and all API/DB operations
+   ══════════════════════════════════════════════════════════════════════ */
+
+#loader {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: var(--bg-deep);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    transition: opacity 0.35s ease, visibility 0.35s ease;
+}
+
+#loader.loader-hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* ── Receipt tape container ─────────────────────────── */
+.loader-receipt {
+    position: relative;
+    width: 96px;
+    background: #0f1623;
+    border: 1px solid rgba(96, 165, 250, 0.18);
+    border-radius: 4px 4px 0 0;
+    overflow: hidden;
+    box-shadow:
+        0 0 0 1px rgba(96, 165, 250, 0.06),
+        0 8px 32px rgba(0, 0, 0, 0.6),
+        0 0 60px rgba(59, 130, 246, 0.08);
+}
+
+/* Serrated top edge — mimics thermal paper tear */
+.loader-receipt::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 6px;
+    background:
+        radial-gradient(circle at 4px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 12px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 20px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 28px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 36px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 44px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 52px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 60px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 68px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 76px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 84px 6px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 92px 6px, var(--bg-deep) 4px, transparent 4px);
+    background-size: 16px 6px;
+    z-index: 3;
+}
+
+/* Serrated bottom edge — paper feed illusion */
+.loader-receipt::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 6px;
+    background:
+        radial-gradient(circle at 4px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 12px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 20px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 28px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 36px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 44px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 52px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 60px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 68px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 76px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 84px 0px, var(--bg-deep) 4px, transparent 4px),
+        radial-gradient(circle at 92px 0px, var(--bg-deep) 4px, transparent 4px);
+    background-size: 16px 6px;
+    z-index: 3;
+}
+
+.loader-receipt-inner {
+    padding: 14px 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    position: relative;
+}
+
+/* Blue scan line that travels down the receipt */
+.loader-scan-line {
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(96, 165, 250, 0.15) 10%,
+        rgba(96, 165, 250, 0.7) 40%,
+        rgba(148, 210, 255, 0.95) 50%,
+        rgba(96, 165, 250, 0.7) 60%,
+        rgba(96, 165, 250, 0.15) 90%,
+        transparent 100%
+    );
+    box-shadow: 0 0 8px 2px rgba(96, 165, 250, 0.35);
+    animation: scanDown 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    z-index: 2;
+    top: 14px;
+}
+
+@keyframes scanDown {
+    0%   { top: 14px; opacity: 0; }
+    8%   { opacity: 1; }
+    92%  { opacity: 1; }
+    100% { top: calc(100% - 14px); opacity: 0; }
+}
+
+/* Each receipt line row */
+.loader-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    opacity: 0;
+    animation: rowReveal 1.6s ease forwards;
+}
+
+.loader-row:nth-child(1) { animation-delay: 0.05s; }
+.loader-row:nth-child(2) { animation-delay: 0.18s; }
+.loader-row:nth-child(3) { animation-delay: 0.31s; }
+.loader-row:nth-child(4) { animation-delay: 0.44s; }
+.loader-row:nth-child(5) { animation-delay: 0.57s; }
+.loader-row:nth-child(6) { animation-delay: 0.70s; }
+.loader-row:nth-child(7) { animation-delay: 0.83s; }
+
+@keyframes rowReveal {
+    0%   { opacity: 0; }
+    40%  { opacity: 0; }
+    60%  { opacity: 1; }
+    100% { opacity: 1; }
+}
+
+/* The receipt rows loop — after all rows are revealed, restart */
+.loader-receipt-inner {
+    animation: receiptCycle 1.6s ease infinite;
+}
+
+@keyframes receiptCycle {
+    0%   { }
+    85%  { }
+    100% { }
+}
+
+/* Label stub (left side of a receipt row) */
+.loader-stub {
+    height: 5px;
+    border-radius: 2px;
+    background: rgba(96, 165, 250, 0.12);
+    flex-shrink: 0;
+}
+
+/* Value stub (right side — the "amount") */
+.loader-val {
+    height: 5px;
+    border-radius: 2px;
+    background: rgba(96, 165, 250, 0.22);
+    flex-shrink: 0;
+}
+
+/* Divider line in receipt */
+.loader-divider {
+    height: 1px;
+    background: repeating-linear-gradient(
+        90deg,
+        rgba(96, 165, 250, 0.2) 0px,
+        rgba(96, 165, 250, 0.2) 3px,
+        transparent 3px,
+        transparent 6px
+    );
+    margin: 2px 0;
+    opacity: 0;
+    animation: rowReveal 1.6s ease forwards;
+}
+
+.loader-divider:nth-child(4) { animation-delay: 0.38s; }
+.loader-divider:nth-child(8) { animation-delay: 0.77s; }
+
+/* Total row — highlighted */
+.loader-row.loader-total .loader-stub {
+    background: rgba(96, 165, 250, 0.28);
+    height: 6px;
+}
+
+.loader-row.loader-total .loader-val {
+    background: var(--accent-glow);
+    height: 6px;
+    box-shadow: 0 0 6px rgba(96, 165, 250, 0.5);
+    animation: totalPulse 1s ease-in-out infinite 1s;
+}
+
+@keyframes totalPulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(96, 165, 250, 0.4); }
+    50%       { box-shadow: 0 0 10px rgba(96, 165, 250, 0.8); }
+}
+
+/* ── Label below receipt ────────────────────────────── */
+.loader-label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    text-align: center;
+}
+
+.loader-label span {
+    color: var(--accent-glow);
+    animation: labelDots 1.6s steps(4, end) infinite;
+}
+
+@keyframes labelDots {
+    0%  { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+}
+
+/* Ambient glow behind the receipt */
+.loader-glow {
+    position: absolute;
+    width: 140px;
+    height: 200px;
+    background: radial-gradient(ellipse at center,
+        rgba(59, 130, 246, 0.1) 0%,
+        transparent 70%
+    );
+    pointer-events: none;
+    animation: glowPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes glowPulse {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50%       { opacity: 1; transform: scale(1.12); }
+}
+
+/* ── Inline / mini loader for button-level ops ─────── */
+.btn-loading {
+    position: relative;
+    pointer-events: none;
+    opacity: 0.75;
+}
+
+.btn-loading::after {
+    content: '';
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spinBtn 0.7s linear infinite;
+}
+
+@keyframes spinBtn {
+    to { transform: translateY(-50%) rotate(360deg); }
+}
+
+/* ── Subtle top progress bar for fast ops ──────────── */
+#loaderProgressBar {
+    position: fixed;
+    top: 0; left: 0;
+    height: 2px;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-glow), #38bdf8);
+    box-shadow: 0 0 8px rgba(96, 165, 250, 0.6);
+    z-index: 99998;
+    transition: width 0.25s ease;
+    display: none;
+}
+
+#loaderProgressBar.bar-active {
+    display: block;
+}
+
+#loaderProgressBar.bar-done {
+    width: 100% !important;
+    transition: width 0.15s ease, opacity 0.3s ease 0.15s;
+    opacity: 0;
+}
+
+/* ── Respect reduced motion ─────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .loader-scan-line,
+    .loader-row,
+    .loader-divider,
+    .loader-label span,
+    .loader-glow,
+    .loader-row.loader-total .loader-val {
+        animation: none;
+        opacity: 1;
+    }
+}
+
 /* ── BUTTON SYSTEM ───────────────────────────────────────────────────── */
 
 button {
