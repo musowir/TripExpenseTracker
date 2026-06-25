@@ -44,8 +44,10 @@ function _saveTripId(id) {
     }
 }
 
+// Returns true by default (null = never set = cap ON)
 function isSettleCapEnabled() {
-    return localStorage.getItem(LS_SETTLE_CAP_KEY) === "true";
+    const val = localStorage.getItem(LS_SETTLE_CAP_KEY);
+    return val === null ? true : val === "true";
 }
 function setSettleCap(val) {
     localStorage.setItem(LS_SETTLE_CAP_KEY, val ? "true" : "false");
@@ -946,13 +948,10 @@ function setupPreAllocSettleForm() {
     const settleForm = document.getElementById("preAllocSettleForm-settlement");
     if (settleForm) {
 
-        // Compute how much `from` owes `to` based on current balances
         function _computeOwedAmount(fromPerson, toPerson) {
             if (!fromPerson || !toPerson || fromPerson === toPerson) return 0;
-
             const balanceSheet = {};
             globalPeopleList.forEach(p => { if (p?.name) balanceSheet[p.name] = 0; });
-
             (globalCachedData?.expenses || []).forEach(exp => {
                 const amt = parseFloat(exp.amount || 0);
                 const payer = exp.paid_by || "?";
@@ -965,7 +964,6 @@ function setupPreAllocSettleForm() {
                     balanceSheet[c] -= share;
                 });
             });
-
             (globalCachedData?.preAllocationSettlements || []).forEach(entry => {
                 if (entry.type === "settle_up") {
                     const amt = parseFloat(entry.amount || 0);
@@ -975,13 +973,11 @@ function setupPreAllocSettleForm() {
                     balanceSheet[entry.to_person]   -= amt;
                 }
             });
-
             let debtors = [], creditors = [];
             Object.entries(balanceSheet).forEach(([name, bal]) => {
                 if (bal < -0.01) debtors.push({ name, balance: Math.abs(bal) });
                 else if (bal > 0.01) creditors.push({ name, balance: bal });
             });
-
             const dCopy = debtors.map(x => ({ ...x }));
             const cCopy = creditors.map(x => ({ ...x }));
             let d = 0, c = 0;
@@ -998,7 +994,6 @@ function setupPreAllocSettleForm() {
             return 0;
         }
 
-        // Update preview, auto-fill amount, show hint
         const updateSettlePreview = () => {
             const fromSel = document.getElementById("pasSettleFrom");
             const toSel   = document.getElementById("pasSettleTo");
@@ -1071,7 +1066,6 @@ function setupPreAllocSettleForm() {
                 showToast("Enter a valid amount.", "error"); return;
             }
 
-            // Only enforce cap when the feature is enabled
             if (isSettleCapEnabled()) {
                 const maxOwed = _computeOwedAmount(from_person, to_person);
                 if (maxOwed <= 0) {
@@ -1105,7 +1099,8 @@ function setupPreAllocSettleForm() {
 
 // ── Delete pre-allocation/settlement ────────────────────────────────────────
 async function deletePreAllocSettlement(id) {
-    if (!confirm("Delete this entry?")) return;
+    const ok = await showCustomConfirm("Delete Settlement", "Remove this settlement entry?");
+    if (!ok) return;
     const result = await apiFetch("/api/pre-allocation-settlement/delete", {
         id
     });
