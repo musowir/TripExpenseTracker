@@ -106,8 +106,24 @@ function updateSyncBadge(status, message) {
     text.textContent = message;
 }
 
+// ── Loader helpers ────────────────────────────────────────────────────────
+function showLoader() {
+    const loader = document.getElementById("loader");
+    if (loader) {
+        loader.classList.remove("loader-hidden");
+    }
+}
+
+function hideLoader() {
+    const loader = document.getElementById("loader");
+    if (loader) {
+        loader.classList.add("loader-hidden");
+    }
+}
+
 // ── Central API fetch ─────────────────────────────────────────────────────
 async function apiFetch(url, payload = null) {
+    showLoader();
     try {
         const opts = payload
         ? {
@@ -130,6 +146,8 @@ async function apiFetch(url, payload = null) {
         updateSyncBadge("error", "DB Offline");
         showToast("Network error — check server.", "error");
         return null;
+    } finally {
+        hideLoader();
     }
 }
 
@@ -155,8 +173,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         console.error("Init error:", e);
         showToast("Failed to load — check server is running.", "error");
     } finally {
-        const loader = document.getElementById("loader");
-        if (loader) loader.style.display = "none";
+        hideLoader();
     }
 });
 
@@ -176,13 +193,10 @@ async function loadData() {
 
 // ── Data pull ─────────────────────────────────────────────────────────────
 async function pullDatabaseState() {
-    const loader = document.getElementById("loader");
     try {
         const data = await apiFetch(`/api/data?trip_id=${currentTripId}`);
         if (!data) {
-            if (loader) {
-                loader.textContent = "DB connection failed — is the server running?"; loader.style.display = "block";
-            }
+            showToast("Failed to load data — check server connection.", "error");
             return;
         }
         globalCachedData = data;
@@ -192,8 +206,9 @@ async function pullDatabaseState() {
         renderUI();
         renderBudgetBar();
         renderDailyAnalytics();
-    } finally {
-        if (loader) loader.style.display = "none";
+    } catch (e) {
+        console.error("pullDatabaseState error:", e);
+        showToast("Error loading data", "error");
     }
 }
 
