@@ -44,7 +44,6 @@ function _saveTripId(id) {
     }
 }
 
-// Returns true by default (null = never set = cap ON)
 function isSettleCapEnabled() {
     const val = localStorage.getItem(LS_SETTLE_CAP_KEY);
     return val === null ? true: val === "true";
@@ -72,22 +71,16 @@ function showToast(msg, type = "info") {
         document.body.appendChild(t);
     }
     const palettes = {
-        info: ["#1e293b",
-            "#f1f5f9"],
-        error: ["#7f1d1d",
-            "#fca5a5"],
-        success: ["#064e3b",
-            "#6ee7b7"],
-        warn: ["#78350f",
-            "#fde68a"]
+        info: ["#1e293b", "#f1f5f9"],
+        error: ["#7f1d1d", "#fca5a5"],
+        success: ["#064e3b", "#6ee7b7"],
+        warn: ["#78350f", "#fde68a"]
     };
-    const [bg,
-        fg] = palettes[type] || palettes.info;
+    const [bg, fg] = palettes[type] || palettes.info;
     t.style.cssText += `;background:${bg};color:${fg}`;
     t.textContent = msg;
     t.style.opacity = "1";
 
-    // Temporarily mirror in the sync badge
     const badge = document.getElementById("syncBadge");
     const text = document.getElementById("syncStatusText");
     if (badge && text) {
@@ -117,9 +110,14 @@ function updateSyncBadge(status, message) {
 }
 
 // ── Loader helpers ────────────────────────────────────────────────────────
-function showLoader() {
+function showLoader(label = "Fetching data") {
     const loader = document.getElementById("loader");
+    const loaderLabel = document.getElementById("loaderLabel");
     if (loader) {
+        if (loaderLabel) {
+            // Update the label text while preserving the animated dots span
+            loaderLabel.innerHTML = `${label}<span>...</span>`;
+        }
         loader.classList.remove("loader-hidden");
     }
 }
@@ -131,16 +129,18 @@ function hideLoader() {
     }
 }
 
-// ── Central API fetch ─────────────────────────────────────────────────────
-async function apiFetch(url, payload = null) {
-    showLoader();
+// ── Context-aware API fetch ───────────────────────────────────────────────
+async function apiFetch(url, payload = null, contextLabel = null) {
+    // Auto-detect context from URL if no explicit label provided
+    if (!contextLabel) {
+        contextLabel = _inferContextFromUrl(url, payload);
+    }
+    showLoader(contextLabel);
     try {
         const opts = payload
         ? {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         }: {
             method: "GET"
@@ -148,7 +148,8 @@ async function apiFetch(url, payload = null) {
         const res = await fetch(url, opts);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-            showToast(data?.error || `Server error (${res.status})`, "error"); return null;
+            showToast(data?.error || `Server error (${res.status})`, "error");
+            return null;
         }
         updateSyncBadge("synced", "SQLite Connected");
         return data;
@@ -159,6 +160,49 @@ async function apiFetch(url, payload = null) {
     } finally {
         hideLoader();
     }
+}
+
+// ── Infer context from URL and payload ────────────────────────────────────
+function _inferContextFromUrl(url, payload) {
+    // Data pulls
+    if (url.includes('/api/data'))           return "Loading trip data";
+    if (url.includes('/api/analytics/daily')) return "Crunching daily stats";
+    
+    // Trip operations
+    if (url.includes('/api/trips/add'))      return "Creating trip";
+    if (url.includes('/api/trips/update'))   return "Saving trip settings";
+    if (url.includes('/api/trips/delete'))   return "Deleting trip";
+    if (url.includes('/api/trips'))          return "Loading trips";
+    
+    // People operations
+    if (url.includes('/api/people/add'))     return "Adding member";
+    if (url.includes('/api/people/delete'))  return "Removing member";
+    if (url.includes('/api/people'))         return "Loading members";
+    
+    // Expense operations
+    if (url.includes('/api/expense/add'))    return "Logging expense";
+    if (url.includes('/api/expense/edit'))   return "Updating expense";
+    if (url.includes('/api/expense/delete')) return "Removing expense";
+    if (url.includes('/api/expense'))        return "Loading expenses";
+    
+    // Settlement operations
+    if (url.includes('/api/pre-allocation-settlement/add'))    return "Recording settlement";
+    if (url.includes('/api/pre-allocation-settlement/delete')) return "Removing settlement";
+    if (url.includes('/api/pre-allocation-settlement'))        return "Loading settlements";
+    
+    // Category operations
+    if (url.includes('/api/category/add_main'))    return "Adding category";
+    if (url.includes('/api/category/add_sub'))     return "Adding sub-category";
+    if (url.includes('/api/category/delete_main')) return "Deleting category";
+    if (url.includes('/api/category/delete_sub'))  return "Deleting sub-category";
+    if (url.includes('/api/category'))             return "Loading categories";
+    
+    // Clear/wipe
+    if (url.includes('/api/clear'))           return "Wiping logs";
+    
+    // Fallback
+    if (payload) return "Saving changes";
+    return "Fetching data";
 }
 
 // ── Validation ────────────────────────────────────────────────────────────
@@ -245,12 +289,11 @@ async function pullPeopleList() {
     if (!data) return;
     globalPeopleList = Array.isArray(data) ? data: [];
     if (!globalPeopleList.some(p => p.name === RESERVED)) {
-        globalPeopleList.unshift({
-            id: 0, name: RESERVED, is_active: 1
-        });
+        globalPeopleList.unshift({ id: 0, name: RESERVED, is_active: 1 });
     }
     renderPeopleSelectors();
 }
+
 
 // ── Render UI ─────────────────────────────────────────────────────────────
 function renderUI() {
