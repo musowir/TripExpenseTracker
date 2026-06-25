@@ -598,8 +598,139 @@ button.btn-primary:active {
 .icon-analytics span:nth-child(2){ height:11px; }
 .icon-analytics span:nth-child(3){ height:8px; }
 
-.icon-setup { border-radius: 2px; }
-.icon-setup::after { content: ''; position: absolute; top: 2px; left: 2px; right: 2px; bottom: 2px; border: 1px solid currentColor; }
+
+.icon-setup {
+    border: none;
+    position: relative;
+    width: 16px;
+    height: 16px;
+}
+
+icon-setup {
+    border: none;
+    position: relative;
+    width: 16px;
+    height: 16px;
+}
+
+/* Flanking bars */
+.icon-setup::before {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 2px; height: 12px;
+    background: currentColor;
+    box-shadow: 10px 0 0 currentColor;
+}
+/* Central bar with dot */
+.icon-setup::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 7px;
+    width: 2px; height: 12px;
+    background: currentColor;
+    border-top: 4px solid var(--bg-card); /* Creates the "dot" gap */
+    border-bottom: 4px solid var(--bg-card);
+    box-sizing: border-box;
+}icon-setup {
+    border: none;
+    position: relative;
+    width: 16px;
+    height: 16px;
+}
+/* Flanking bars */
+.icon-setup::before {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 2px; height: 12px;
+    background: currentColor;
+    box-shadow: 10px 0 0 currentColor;
+}
+/* Central bar with dot */
+.icon-setup::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 7px;
+    width: 2px; height: 12px;
+    background: currentColor;
+    border-top: 4px solid var(--bg-card); /* Creates the "dot" gap */
+    border-bottom: 4px solid var(--bg-card);
+    box-sizing: border-box;
+}
+
+.icon-group {
+    border: none;
+    position: relative;
+    width: 16px;
+    height: 16px;
+}
+
+/* Background Person */
+.icon-group::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 0px;
+    width: 10px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    box-sizing: border-box;
+    opacity: 0.6; /* Slight fade to show depth */
+}
+
+/* Foreground Person */
+.icon-group::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 6px;
+    width: 10px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    box-sizing: border-box;
+    background: var(--bg-card); /* Ensures foreground person covers background */
+}
+.icon-group {
+    border: none;
+    position: relative;
+    width: 16px;
+    height: 16px;
+}
+
+/* Background Person */
+.icon-group::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 0px;
+    width: 10px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    box-sizing: border-box;
+    opacity: 0.6; /* Slight fade to show depth */
+}
+
+/* Foreground Person */
+.icon-group::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 6px;
+    width: 10px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    box-sizing: border-box;
+    background: var(--bg-card); /* Ensures foreground person covers background */
+}
 
 .icon-export { border-radius: 2px; }
 .icon-export::before { content:''; position:absolute; top:2px; left:3px; width:4px; height:4px; border-right:2px solid currentColor; border-top:2px solid currentColor; transform: rotate(45deg); }

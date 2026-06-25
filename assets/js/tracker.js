@@ -379,8 +379,10 @@ function renderTripDashboard() {
         <div style="background:var(--bg-deep);border-radius:3px;height:4px;overflow:hidden">
         <div style="height:100%;width:${budPct}%;background:${budPct >= 100 ? "var(--danger-muted)": "var(--accent-glow)"};border-radius:3px"></div>
         </div>`: `<div style="font-size:10px;color:var(--text-dim)">No budget set</div>`}
-        ${!isActive ? `<div style="margin-top:8px"><span style="font-size:11px;color:var(--accent-glow);cursor:pointer" data-switch="${trip.id}">Switch →</span></div>`: ""}
-        <span style="position:absolute;bottom:14px;right:14px;color:var(--danger-muted);font-size:11px;cursor:pointer;font-weight:500;opacity:0.7;hover:opacity:1" class="trip-del-btn" data-id="${trip.id}">Delete</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+            ${!isActive ? `<span style="font-size:11px;color:var(--accent-glow);cursor:pointer" data-switch="${trip.id}">Switch →</span>`: `<div></div>`}
+            <span style="color:var(--danger-muted);font-size:11px;cursor:pointer;font-weight:500" class="trip-del-btn" data-id="${trip.id}">Delete</span>
+        </div>
         `;
         grid.appendChild(card);
     });
@@ -935,19 +937,105 @@ function setupPreAllocSettleForm() {
     // SETTLEMENT FORM
     const settleForm = document.getElementById("preAllocSettleForm-settlement");
     if (settleForm) {
-        // Update preview when persons selected
+
+        // Compute how much `from` owes `to` based on current balances
+        function _computeOwedAmount(fromPerson, toPerson) {
+            if (!fromPerson || !toPerson || fromPerson === toPerson) return 0;
+
+            // Build balance sheet (same logic as renderLogsAndAnalytics)
+            const balanceSheet = {};
+            globalPeopleList.forEach(p => { if (p?.name) balanceSheet[p.name] = 0; });
+
+            (globalCachedData?.expenses || []).forEach(exp => {
+                const amt = parseFloat(exp.amount || 0);
+                const payer = exp.paid_by || "?";
+                const consumers = Array.isArray(exp.split_with) && exp.split_with.length ? exp.split_with : [RESERVED];
+                const share = amt / consumers.length;
+                if (!(payer in balanceSheet)) balanceSheet[payer] = 0;
+                balanceSheet[payer] += amt;
+                consumers.forEach(c => {
+                    if (!(c in balanceSheet)) balanceSheet[c] = 0;
+                    balanceSheet[c] -= share;
+                });
+            });
+
+            // Apply existing settlements
+            (globalCachedData?.preAllocationSettlements || []).forEach(entry => {
+                if (entry.type === "settle_up") {
+                    const amt = parseFloat(entry.amount || 0);
+                    if (!(entry.from_person in balanceSheet)) balanceSheet[entry.from_person] = 0;
+                    if (!(entry.to_person in balanceSheet)) balanceSheet[entry.to_person] = 0;
+                    balanceSheet[entry.from_person] += amt;
+                    balanceSheet[entry.to_person]   -= amt;
+                }
+            });
+
+            // Run greedy debt-settlement to find how much fromPerson owes toPerson
+            let debtors = [], creditors = [];
+            Object.entries(balanceSheet).forEach(([name, bal]) => {
+                if (bal < -0.01) debtors.push({ name, balance: Math.abs(bal) });
+                else if (bal > 0.01) creditors.push({ name, balance: bal });
+            });
+
+            const dCopy = debtors.map(x => ({ ...x }));
+            const cCopy = creditors.map(x => ({ ...x }));
+            let d = 0, c = 0;
+            while (d < dCopy.length && c < cCopy.length) {
+                const settle = Math.min(dCopy[d].balance, cCopy[c].balance);
+                if (dCopy[d].name === fromPerson && cCopy[c].name === toPerson) {
+                    return Math.round(settle * 100) / 100;
+                }
+                dCopy[d].balance -= settle;
+                cCopy[c].balance -= settle;
+                if (dCopy[d].balance <= 0.01) d++;
+                if (cCopy[c].balance <= 0.01) c++;
+            }
+            return 0; // fromPerson doesn't owe toPerson anything
+        }
+
+        // Update preview when persons selected, auto-fill amount, show max hint
         const updateSettlePreview = () => {
             const fromSel = document.getElementById("pasSettleFrom");
             const toSel   = document.getElementById("pasSettleTo");
             const preview = document.getElementById("pasSettlePreview");
             const previewFrom = document.getElementById("pasSettleFromPreview");
             const previewTo   = document.getElementById("pasSettleToPreview");
+            const amountInput = document.getElementById("pasSettleAmount");
             if (!fromSel || !toSel || !preview || !previewFrom || !previewTo) return;
 
             if (fromSel.value && toSel.value) {
                 preview.style.display = 'flex';
                 previewFrom.textContent = fromSel.options[fromSel.selectedIndex].text;
                 previewTo.textContent   = toSel.options[toSel.selectedIndex].text;
+
+                // Auto-fill and cap amount
+                const owed = _computeOwedAmount(fromSel.value, toSel.value);
+                if (amountInput) {
+                    if (owed > 0) {
+                        amountInput.value = owed.toFixed(2);
+                        amountInput.max = owed.toFixed(2);
+                        // Show hint below amount field
+                        let hint = document.getElementById("_settleAmountHint");
+                        if (!hint) {
+                            hint = document.createElement("div");
+                            hint.id = "_settleAmountHint";
+                            hint.style.cssText = "font-size:11px;color:var(--accent-glow);margin-top:4px";
+                            amountInput.parentNode.appendChild(hint);
+                        }
+                        hint.textContent = `Max: ${fmt(owed)} (full amount owed)`;
+                    } else {
+                        amountInput.value = "";
+                        amountInput.removeAttribute("max");
+                        let hint = document.getElementById("_settleAmountHint");
+                        if (!hint) {
+                            hint = document.createElement("div");
+                            hint.id = "_settleAmountHint";
+                            hint.style.cssText = "font-size:11px;color:var(--text-dim);margin-top:4px";
+                            amountInput.parentNode.appendChild(hint);
+                        }
+                        hint.textContent = fromSel.value === toSel.value ? "" : `${fromSel.options[fromSel.selectedIndex].text} doesn't owe ${toSel.options[toSel.selectedIndex].text} anything.`;
+                    }
+                }
             } else {
                 preview.style.display = 'none';
             }
@@ -978,6 +1066,15 @@ function setupPreAllocSettleForm() {
             }
             if (amount <= 0) {
                 showToast("Enter a valid amount.", "error"); return;
+            }
+
+            // Validate settlement doesn't exceed what's owed
+            const maxOwed = _computeOwedAmount(from_person, to_person);
+            if (maxOwed <= 0) {
+                showToast(`${from_person} doesn't owe ${to_person} anything.`, "error"); return;
+            }
+            if (amount > maxOwed + 0.005) {
+                showToast(`Can't settle more than ${fmt(maxOwed)} — that's all ${from_person} owes ${to_person}.`, "error"); return;
             }
 
             const result = await apiFetch("/api/pre-allocation-settlement/add", {
