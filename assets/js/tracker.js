@@ -1272,10 +1272,15 @@ function openEditExpenseModal(expId) {
 
 // ── App engine ────────────────────────────────────────────────────────────
 function initAppEngine() {
-    // Settings accordion
+    // Settings accordion — one open at a time
     document.querySelectorAll("[data-accordion] > .accordion-head").forEach(head => {
         head.addEventListener("click", () => {
-            head.closest("[data-accordion]")?.classList.toggle("open");
+            const current = head.closest("[data-accordion]");
+            const isOpen = current.classList.contains("open");
+            // Close all
+            document.querySelectorAll("[data-accordion]").forEach(a => a.classList.remove("open"));
+            // Toggle clicked one open (unless it was already open)
+            if (!isOpen) current.classList.add("open");
         });
     });
 
