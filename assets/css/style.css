@@ -1103,16 +1103,25 @@ icon-setup {
 }
 
 .accordion-body {
-    display: none;
-    padding: 0 18px 18px;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    padding: 0 18px;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.25s ease,
+                padding 0.35s ease;
 }
 
 .accordion-card.open .accordion-body {
-    display: block;
+    max-height: 1000px;
+    opacity: 1;
+    padding: 0 18px 18px;
 }
 
 .accordion-card.open .accordion-head {
     padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-line);
+    transition: border-color 0.3s ease;
 }
 
 .accordion-card.danger-zone {
