@@ -3,6 +3,8 @@
 // ── Constants & state ─────────────────────────────────────────────────────
 const LS_TRIP_KEY = "exptracker_activeTripId_v1";
 const LS_SETTLE_CAP_KEY = "exptracker_settleCapEnabled_v1";
+const LS_TRIP_LOCK_KEY = "exptracker_tripLock_v1";
+const LS_ACTIVE_TAB_KEY = "exptracker_activeTab_v1";
 const MAX_NAME = 80;
 const MAX_DESC = 255;
 const MAX_AMOUNT = 10_000_000;
@@ -50,6 +52,29 @@ function isSettleCapEnabled() {
 }
 function setSettleCap(val) {
     localStorage.setItem(LS_SETTLE_CAP_KEY, val ? "true": "false");
+}
+
+// ── Trip lock ─────────────────────────────────────────────────────────────
+function _tripLockKey(id) {
+    return `${LS_TRIP_LOCK_KEY}_${id || currentTripId}`;
+}
+function isTripLocked(id) {
+    return localStorage.getItem(_tripLockKey(id)) === "true";
+}
+function setTripLock(val) {
+    localStorage.setItem(_tripLockKey(), val ? "true" : "false");
+}
+function applyTripLock(locked) {
+    document.body.classList.toggle("trip-locked", locked);
+    const toggle = document.getElementById("tripLockToggle");
+    if (toggle) toggle.checked = locked;
+    // Update sync badge to show locked state persistently when locked
+    const badge = document.getElementById("syncBadge");
+    const text = document.getElementById("syncStatusText");
+    if (badge && text && locked) {
+        badge.className = "sync-status-pill locked";
+        text.textContent = "Trip Locked";
+    }
 }
 
 // ── Currency helper ───────────────────────────────────────────────────────
@@ -105,6 +130,8 @@ function updateSyncBadge(status, message) {
     const badge = document.getElementById("syncBadge");
     const text = document.getElementById("syncStatusText");
     if (!badge || !text) return;
+    // Don't overwrite the locked state (unless we're explicitly restoring)
+    if (isTripLocked() && status !== "locked" && badge.classList.contains("locked")) return;
     badge.className = "sync-status-pill " + status;
     text.textContent = message;
 }
@@ -220,6 +247,13 @@ function validDesc(v) {
 // ── Init ──────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
     initAppEngine();
+    applyTripLock(isTripLocked());
+
+    // Restore last active tab
+    const savedTab = localStorage.getItem(LS_ACTIVE_TAB_KEY) || "view-home";
+    const savedNavBtn = document.querySelector(`.nav-item[data-target="${savedTab}"]`);
+    if (savedNavBtn) savedNavBtn.click();
+
     setDefaultDateTime();
     try {
         await pullTripsList(true);
@@ -260,6 +294,7 @@ async function pullDatabaseState() {
         renderUI();
         renderBudgetBar();
         renderDailyAnalytics();
+        applyTripLock(isTripLocked());
     } catch (e) {
         console.error("pullDatabaseState error:", e);
         showToast("Error loading data", "error");
@@ -434,7 +469,7 @@ function renderTripDashboard() {
         </div>`: `<div style="font-size:10px;color:var(--text-dim)">No budget set</div>`}
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
         ${!isActive ? `<span style="font-size:11px;color:var(--accent-glow);cursor:pointer" data-switch="${trip.id}">Switch →</span>`: `<div></div>`}
-        <span style="color:var(--danger-muted);font-size:11px;cursor:pointer;font-weight:500" class="trip-del-btn" data-id="${trip.id}">Delete</span>
+        ${!isTripLocked(trip.id) ? `<span style="color:var(--danger-muted);font-size:11px;cursor:pointer;font-weight:500" class="trip-del-btn" data-id="${trip.id}">Delete</span>` : `<span style="font-size:11px;color:var(--text-dim)">Locked</span>`}
         </div>
         `;
         grid.appendChild(card);
@@ -1253,6 +1288,7 @@ function initAppEngine() {
             this.classList.add("active");
             const tid = this.getAttribute("data-target");
             document.getElementById(tid)?.classList.add("active");
+            localStorage.setItem(LS_ACTIVE_TAB_KEY, tid);
             const labels = {
                 "view-home": "Log", "view-group": "Splits", "view-history": "History", "view-analytics": "Analytics", "view-settings": "Setup"
             };
@@ -1293,6 +1329,26 @@ function initAppEngine() {
         settleCapToggle.addEventListener("change", function () {
             setSettleCap(this.checked);
             showToast(this.checked ? "Settlement cap enabled.": "Settlement cap disabled.", "info");
+        });
+    }
+
+    // ── Trip lock toggle ───────────────────────────────────────────────────
+    const tripLockToggle = document.getElementById("tripLockToggle");
+    if (tripLockToggle) {
+        applyTripLock(isTripLocked());
+        tripLockToggle.addEventListener("change", function () {
+            setTripLock(this.checked);
+            applyTripLock(this.checked);
+            if (!this.checked) {
+                // Restore the badge to its normal connected state when unlocking
+                updateSyncBadge("synced", "SQLite Connected");
+            }
+            showToast(
+                this.checked
+                    ? "Trip locked — all edits disabled."
+                    : "Trip unlocked — edits re-enabled.",
+                this.checked ? "warn" : "success"
+            );
         });
     }
 

@@ -1380,5 +1380,49 @@ input[type="datetime-local"]::-webkit-datetime-edit-ampm-field {
 .toggle-switch input { position:absolute;opacity:0;width:0;height:0; }
 .toggle-track { display:flex;align-items:center;width:44px;height:24px;background:var(--border-line);border-radius:12px;transition:background 0.2s;padding:2px; }
 .toggle-switch input:checked + .toggle-track { background:var(--accent-glow); }
+.toggle-switch input:checked + .toggle-track--danger { background:var(--danger-muted); }
 .toggle-thumb { width:20px;height:20px;background:#fff;border-radius:50%;transition:transform 0.2s;flex-shrink:0; }
 .toggle-switch input:checked + .toggle-track .toggle-thumb { transform:translateX(20px); }
+
+/* ── Trip lock — hide whole cards & Edit/Delete from log ───────────────── */
+
+/* Log Expense card */
+.trip-locked #view-home > .card:has(#expenseForm) { display:none !important; }
+
+/* Record Settlement card */
+.trip-locked #view-group > .card:has(#preAllocSettleForm-settlement) { display:none !important; }
+
+/* Categories accordion */
+.trip-locked .card.accordion-card:has(#newMainInput) { display:none !important; }
+
+/* Danger Zone accordion */
+.trip-locked .danger-zone { display:none !important; }
+
+/* Edit/Delete buttons in log history — but NOT the Switch → button in trip dashboard */
+.trip-locked .log-item .edit-exp-btn,
+.trip-locked .log-item .del-exp-btn { display:none !important; }
+
+/* Hide delete buttons in trip dashboard, keep Switch → visible */
+.trip-locked .trip-del-btn { display:none !important; }
+
+/* Settings — grey out trip name/currency/budget/save */
+.trip-locked #editTripName,
+.trip-locked #editTripCurrency,
+.trip-locked #editTripBudget,
+.trip-locked #saveTripSettingsBtn { opacity:0.35; pointer-events:none; }
+
+/* Members — hide Add Person controls and Remove buttons */
+.trip-locked #newPersonInput,
+.trip-locked #addPersonBtn,
+.trip-locked .rm-person-btn { display:none !important; }
+
+/* ── Locked state in sync badge ────────────────────────────────────────── */
+.sync-status-pill.locked { color: var(--danger-muted); border-color: rgba(239,68,68,0.3); }
+.sync-status-pill.locked .indicator-dot {
+    background: var(--danger-muted);
+    animation: lockPulse 2s ease-in-out infinite;
+}
+@keyframes lockPulse {
+    0%,100% { opacity:1; }
+    50% { opacity:0.3; }
+}
