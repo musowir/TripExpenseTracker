@@ -64,7 +64,7 @@ git clone https://github.com/musowir/TripExpenseTracker.git
 cd TripExpenseTracker
 
 # Install dependencies
-pip install flask
+pip install -r requirements.txt
 
 # Start the server
 python server.py
